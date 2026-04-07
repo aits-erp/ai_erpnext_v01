@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-04-07 13:04:21.063978",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "email_subject",
+  "from_email",
+  "received_on",
+  "source_type",
+  "extracted_json",
+  "suggested_doctype",
+  "status",
+  "communication_link",
+  "created_document"
+ ],
+ "fields": [
+  {
+   "fieldname": "email_subject",
+   "fieldtype": "Data",
+   "label": "Email Subject"
+  },
+  {
+   "fieldname": "from_email",
+   "fieldtype": "Data",
+   "label": "From Email"
+  },
+  {
+   "fieldname": "received_on",
+   "fieldtype": "Datetime",
+   "label": "Received On"
+  },
+  {
+   "fieldname": "source_type",
+   "fieldtype": "Select",
+   "label": "Source Type",
+   "options": "\nEmail\nPDF Upload\nWhatsApp"
+  },
+  {
+   "fieldname": "extracted_json",
+   "fieldtype": "Long Text",
+   "label": "Raw Extracted JSON"
+  },
+  {
+   "fieldname": "suggested_doctype",
+   "fieldtype": "Data",
+   "label": "Suggested DocType"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status"
+  },
+  {
+   "fieldname": "communication_link",
+   "fieldtype": "Link",
+   "label": "Communication Link",
+   "options": "Communication"
+  },
+  {
+   "fieldname": "created_document",
+   "fieldtype": "Data",
+   "label": "Created Document"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-07 13:22:38.880254",
+ "modified_by": "Administrator",
+ "module": "ai_erpnext",
+ "name": "AI Email Queue",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

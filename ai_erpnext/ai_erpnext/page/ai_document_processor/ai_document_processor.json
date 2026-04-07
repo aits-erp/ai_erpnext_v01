@@ -1,0 +1,18 @@
+{
+  "content": "<p>AI Document Processor</p>",
+  "doctype": "Page",
+  "icon": "octicon octicon-file-text",
+  "module": "Ai Erpnext",
+  "name": "ai_document_processor",
+  "page_name": "ai_document_processor",
+  "roles": [
+    {
+      "role": "System Manager"
+    },
+    {
+      "role": "Administrator"
+    }
+  ],
+  "standard": "Yes",
+  "title": "AI Docs Processor"
+}
