@@ -42,7 +42,8 @@ Return this exact JSON structure:
       "qty": 0,
       "uom": "Nos",
       "rate": 0,
-      "amount": 0
+      "amount": 0,
+      "hsn_code": ""
     }
   ],
   "taxes": [

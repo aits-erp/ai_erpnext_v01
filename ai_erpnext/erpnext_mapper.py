@@ -110,6 +110,7 @@ def _build_items(items, doctype):
             "qty": float(i.get("qty") or 1),
             "rate": float(i.get("rate") or 0),
             "uom": i.get("uom") or "Nos",
+            "gst_hsn_code": i.get("hsn_code") or "999999"
         }
         if doctype in ["Sales Order", "Purchase Order"]:
             row["delivery_date"] = today()
