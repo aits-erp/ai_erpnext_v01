@@ -1,7 +1,6 @@
 import frappe
 import json
 import os
-from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
 from ai_erpnext.erpnext_mapper import create_document
 from ai_erpnext.erpnext_mapper import (
     create_quotation,
@@ -42,6 +41,16 @@ def process_document(file_url):
         # ── Only NOW call Claude ──
         mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                     ".png": "image/png", ".webp": "image/webp"}
+
+        # Lazy import (only when needed)
+        try:
+            from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
+        except ImportError:
+            return {
+                "success": False,
+                "error": "AI feature not available. Required module 'anthropic' is not installed.",
+                "stage": "dependency"
+            }
 
         if ext == ".pdf":
             extracted = extract_from_pdf(file_path)

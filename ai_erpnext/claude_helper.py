@@ -1,14 +1,27 @@
-import anthropic
 import base64
 import json
 import os
 import frappe
 
 def get_claude_client():
+    try:
+        import anthropic
+    except ImportError:
+        frappe.throw(
+            "Anthropic module not installed. Please contact administrator or upgrade Frappe Cloud plan."
+        )
+
     api_key = os.environ.get("CLAUDE_API_KEY") or frappe.conf.get("claude_api_key")
     if not api_key:
         frappe.throw("Claude API key not configured")
+
     return anthropic.Anthropic(api_key=api_key)
+
+# def get_claude_client():
+#     api_key = os.environ.get("CLAUDE_API_KEY") or frappe.conf.get("claude_api_key")
+#     if not api_key:
+#         frappe.throw("Claude API key not configured")
+#     return anthropic.Anthropic(api_key=api_key)
 
 EXTRACTION_PROMPT = """
 You are a document data extractor. Extract ALL details from this document.
