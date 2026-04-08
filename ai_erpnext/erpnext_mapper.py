@@ -176,7 +176,8 @@ def _get_or_create_item(name):
         "item_name": name,
         "item_group": "All Item Groups",
         "is_stock_item": 0,
-        "stock_uom": "Nos"
+        "stock_uom": "Nos",
+        "hsn_code": "999999"
     })
     doc.insert(ignore_permissions=True)
     return doc.name
