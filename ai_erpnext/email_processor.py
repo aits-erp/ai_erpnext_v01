@@ -3,6 +3,10 @@ import json
 import os
 
 def process_incoming_email(doc, method):
+    frappe.log_error(
+        f"FIRED | doc={doc.name} | s_o_r={doc.sent_or_received} | type={doc.communication_type} | subject={doc.subject}",
+        "AI Hook Debug"
+    )
     """Fires on every new Communication. Checks if it's a business doc."""
     
     # Only process received emails, not sent ones
@@ -102,3 +106,14 @@ def process_incoming_email(doc, method):
             )
         except Exception as e:
             frappe.log_error(str(e), "AI Queue Insert Error")
+
+
+def process_on_update(doc, method):
+    """Catches attachments that weren't ready at insert time"""
+    # Only run if not already queued
+    if doc.sent_or_received != "Received":
+        return
+    if frappe.db.exists("AI Email Queue", {"communication_link": doc.name}):
+        return
+    # Now attachments exist — run full processing
+    process_incoming_email(doc, method)
