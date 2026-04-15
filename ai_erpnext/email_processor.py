@@ -68,12 +68,16 @@ def process_incoming_email(doc, method):
                    "item", "product", "service", "bill"]
         
         keyword_hits = sum(1 for k in keywords if k in body_lower)
+
+        frappe.log_error(f"Keyword hits: {keyword_hits}", "AI Debug")
         
-        if keyword_hits >= 3:  # Only call Claude if looks relevant
+        # if keyword_hits >= 3:  # Only call Claude if looks relevant
+        if True:  # For testing, always call Claude on email body
             try:
                 from ai_erpnext.claude_helper import extract_from_email_text
                 extracted = extract_from_email_text(doc.content)
                 source_hint = "Email Body"
+                frappe.log_error(f"Extracted: {extracted}", "AI Debug")
             except Exception as e:
                 frappe.log_error(str(e), "AI Email Body Error")
 
@@ -86,7 +90,7 @@ def process_incoming_email(doc, method):
                 "from_email": doc.sender or "",
                 "received_on": doc.creation,
                 "source_type": "Email",
-                "extracted_json": json.dumps(extracted, indent=2),
+                "extracted_json": json.dumps(extracted or {}),
                 "suggested_doctype": extracted.get("document_type", "Quotation"),
                 "status": "Pending",
                 "communication_link": doc.name

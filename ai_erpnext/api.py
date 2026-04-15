@@ -1,8 +1,11 @@
+# api.py — top of file, replace your current imports with this
 import frappe
 import json
 import os
-from ai_erpnext.erpnext_mapper import create_document
+from frappe.utils import today, now  # ← THIS was missing
+from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
 from ai_erpnext.erpnext_mapper import (
+    create_document,
     create_quotation,
     create_sales_order,
     create_sales_invoice,
@@ -211,7 +214,6 @@ def get_email_queue(status="Pending", search=""):
         limit=100
     )
 
-    from frappe.utils import today
     counts = {
         "pending": frappe.db.count("AI Email Queue", {"status": "Pending"}),
         "ignored": frappe.db.count("AI Email Queue", {"status": "Ignored"}),
