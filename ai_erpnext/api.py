@@ -223,3 +223,55 @@ def get_email_queue(status="Pending", search=""):
         })
     }
     return {"success": True, "items": items, "counts": counts}
+
+@frappe.whitelist()
+def check_dependencies():
+    results = {}
+    
+    # Check anthropic
+    try:
+        import anthropic
+        results["anthropic"] = anthropic.__version__
+    except ImportError as e:
+        results["anthropic"] = f"MISSING: {e}"
+    
+    # Check API key
+    api_key = os.environ.get("CLAUDE_API_KEY") or frappe.conf.get("claude_api_key")
+    results["api_key_set"] = bool(api_key)
+    results["api_key_source"] = "env" if os.environ.get("CLAUDE_API_KEY") else ("conf" if frappe.conf.get("claude_api_key") else "MISSING")
+    
+    # Check PyMuPDF
+    try:
+        import fitz
+        results["pymupdf"] = fitz.version
+    except ImportError as e:
+        results["pymupdf"] = f"MISSING: {e}"
+    
+    return results
+
+@frappe.whitelist()
+def extract_queue_item(queue_name):
+    """Called when user clicks Review on an unextracted email"""
+    try:
+        doc = frappe.get_doc("AI Email Queue", queue_name)
+        existing = json.loads(doc.extracted_json or "{}")
+        
+        # Already extracted
+        if existing.get("items"):
+            return {"success": True, "extracted": existing, "cached": True}
+        
+        # Try extracting now
+        from ai_erpnext.claude_helper import extract_from_email_text
+        extracted = extract_from_email_text(doc.email_body or "")
+        
+        # Save result back
+        frappe.db.set_value("AI Email Queue", queue_name, {
+            "extracted_json": json.dumps(extracted, indent=2),
+            "suggested_doctype": extracted.get("document_type", "Unknown")
+        })
+        frappe.db.commit()
+        
+        return {"success": True, "extracted": extracted, "cached": False}
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "On-Demand Extract Error")
+        return {"success": False, "error": str(e)}

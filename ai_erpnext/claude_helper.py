@@ -8,13 +8,18 @@ def get_claude_client():
         import anthropic
     except ImportError:
         frappe.throw(
-            "Anthropic module not installed. Please contact administrator or upgrade Frappe Cloud plan."
+            "anthropic package missing. Run: bench pip install anthropic",
+            title="Missing Package"
         )
-
-    api_key = os.environ.get("CLAUDE_API_KEY") or frappe.conf.get("claude_api_key")
+    
+    api_key = (
+        os.environ.get("CLAUDE_API_KEY") or 
+        frappe.conf.get("claude_api_key") or
+        frappe.db.get_single_value("System Settings", "claude_api_key")
+    )
     if not api_key:
-        frappe.throw("Claude API key not configured")
-
+        frappe.throw("Claude API key not configured in site config")
+    
     return anthropic.Anthropic(api_key=api_key)
 
 # def get_claude_client():
