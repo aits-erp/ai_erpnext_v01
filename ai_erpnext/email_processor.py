@@ -82,7 +82,28 @@ def process_incoming_email(doc, method):
                 frappe.log_error(str(e), "AI Email Body Error")
 
     # ── Save to queue if we got something useful ──
-    if extracted and extracted.get("items") and len(extracted["items"]) > 0:
+    # if extracted and extracted.get("items") and len(extracted["items"]) > 0:
+    #     try:
+    #         queue_doc = frappe.get_doc({
+    #             "doctype": "AI Email Queue",
+    #             "email_subject": doc.subject or "(No Subject)",
+    #             "from_email": doc.sender or "",
+    #             "received_on": doc.creation,
+    #             "source_type": "Email",
+    #             "extracted_json": json.dumps(extracted or {}),
+    #             "suggested_doctype": extracted.get("document_type", "Quotation"),
+    #             "status": "Pending",
+    #             "communication_link": doc.name
+    #         })
+    #         queue_doc.insert(ignore_permissions=True)
+    #         frappe.db.commit()
+
+    if not extracted:
+        extracted = {
+            "items": [],
+            "error": "AI extraction failed (anthropic not installed)"
+        }
+
         try:
             queue_doc = frappe.get_doc({
                 "doctype": "AI Email Queue",
@@ -90,8 +111,8 @@ def process_incoming_email(doc, method):
                 "from_email": doc.sender or "",
                 "received_on": doc.creation,
                 "source_type": "Email",
-                "extracted_json": json.dumps(extracted or {}),
-                "suggested_doctype": extracted.get("document_type", "Quotation"),
+                "extracted_json": json.dumps(extracted, indent=2),
+                "suggested_doctype": "Unknown",
                 "status": "Pending",
                 "communication_link": doc.name
             })
