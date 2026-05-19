@@ -20,6 +20,7 @@ doctype_js = {
     "Sales Invoice":    "public/js/form_ai_button.js",
     "Purchase Order":   "public/js/form_ai_button.js",
     "Purchase Invoice": "public/js/form_ai_button.js",
+    "Api Controller": "public/js/api_controller.js",
 }
 
 
