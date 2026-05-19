@@ -1,0 +1,93 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-05-19 14:58:03.322450",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "api_key_section",
+  "api_key",
+  "status",
+  "model_information_section",
+  "model_name_version",
+  "token_usage_section",
+  "tokens_used",
+  "max_tokens",
+  "last_used"
+ ],
+ "fields": [
+  {
+   "fieldname": "api_key_section",
+   "fieldtype": "Section Break",
+   "label": "API Key"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "Api key"
+  },
+  {
+   "default": "Enable",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "status",
+   "options": "Enable\nDisable"
+  },
+  {
+   "fieldname": "model_information_section",
+   "fieldtype": "Section Break",
+   "label": "Model information "
+  },
+  {
+   "fieldname": "token_usage_section",
+   "fieldtype": "Section Break",
+   "label": "Token usage "
+  },
+  {
+   "fieldname": "tokens_used",
+   "fieldtype": "Int",
+   "label": "Tokens Used"
+  },
+  {
+   "fieldname": "max_tokens",
+   "fieldtype": "Int",
+   "label": "Max tokens "
+  },
+  {
+   "fieldname": "last_used",
+   "fieldtype": "Datetime",
+   "label": "Last Used"
+  },
+  {
+   "fieldname": "model_name_version",
+   "fieldtype": "Data",
+   "label": "Model name/version"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-05-19 15:59:36.741686",
+ "modified_by": "Administrator",
+ "module": "ai_erpnext",
+ "name": "Api Controller",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
