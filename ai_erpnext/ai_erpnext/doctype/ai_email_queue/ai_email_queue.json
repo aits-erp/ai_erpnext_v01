@@ -10,6 +10,7 @@
   "received_on",
   "source_type",
   "extracted_json",
+  "email_body",
   "suggested_doctype",
   "status",
   "communication_link",
@@ -50,7 +51,8 @@
   {
    "fieldname": "status",
    "fieldtype": "Select",
-   "label": "Status"
+   "label": "Status",
+   "options": "\nPending\nProcessed\nIgnored"
   },
   {
    "fieldname": "communication_link",
@@ -62,12 +64,17 @@
    "fieldname": "created_document",
    "fieldtype": "Data",
    "label": "Created Document"
+  },
+  {
+   "fieldname": "email_body",
+   "fieldtype": "Long Text",
+   "label": "Email Body"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-07 13:22:38.880254",
+ "modified": "2026-04-15 23:58:32.726147",
  "modified_by": "Administrator",
  "module": "ai_erpnext",
  "name": "AI Email Queue",

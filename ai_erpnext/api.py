@@ -1,4 +1,6 @@
 # api.py — top of file, replace your current imports with this
+from pydoc import doc
+
 import frappe
 import json
 import os
@@ -86,15 +88,71 @@ def process_document(file_url):
 
 
 # ── Separate endpoint: called AFTER user confirms ──
+# @frappe.whitelist()
+# def create_from_extracted(extracted_data_json, action):
+#     """
+#     action = "quotation_only" | "so_only" | "si_only" | 
+#              "quotation_to_so" | "quotation_so_si" | "po_only" | "pi_only"
+#     """
+#     try:
+#         import json as _json
+#         data = _json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
+
+#         results = []
+
+#         if action == "quotation_only":
+#             name = create_quotation(data)
+#             results.append({"doctype": "Quotation", "name": name})
+
+#         elif action == "so_only":
+#             name = create_sales_order(data)
+#             results.append({"doctype": "Sales Order", "name": name})
+
+#         elif action == "si_only":
+#             name = create_sales_invoice(data)
+#             results.append({"doctype": "Sales Invoice", "name": name})
+
+#         elif action == "quotation_to_so":
+#             q = create_quotation(data)
+#             so = make_so_from_quotation(q)
+#             results.append({"doctype": "Quotation", "name": q})
+#             results.append({"doctype": "Sales Order", "name": so})
+
+#         elif action == "quotation_so_si":
+#             q = create_quotation(data)
+#             so = make_so_from_quotation(q)
+#             si = make_si_from_so(so)
+#             results.append({"doctype": "Quotation", "name": q})
+#             results.append({"doctype": "Sales Order", "name": so})
+#             results.append({"doctype": "Sales Invoice", "name": si})
+
+#         elif action == "po_only":
+#             name = create_purchase_order(data)
+#             results.append({"doctype": "Purchase Order", "name": name})
+
+#         elif action == "pi_only":
+#             name = create_purchase_invoice(data)
+#             results.append({"doctype": "Purchase Invoice", "name": name})
+
+#         return {"success": True, "created": results}
+
+#     except Exception as e:
+#         frappe.log_error(frappe.get_traceback(), "AI Create Doc Error")
+#         return {"success": False, "error": str(e)}
+
 @frappe.whitelist()
 def create_from_extracted(extracted_data_json, action):
-    """
-    action = "quotation_only" | "so_only" | "si_only" | 
-             "quotation_to_so" | "quotation_so_si" | "po_only" | "pi_only"
-    """
     try:
-        import json as _json
-        data = _json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
+        data = json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
+
+        # ── HSN Fallback: if any item missing HSN, try to find from notes/doc ──
+        # Also find a common HSN from items that DO have it
+        all_hsn = [i.get("hsn_code","") for i in data.get("items",[]) if i.get("hsn_code")]
+        fallback_hsn = all_hsn[0] if all_hsn else ""
+
+        for item in data.get("items", []):
+            if not item.get("hsn_code") and fallback_hsn:
+                item["hsn_code"] = fallback_hsn
 
         results = []
 
@@ -131,13 +189,64 @@ def create_from_extracted(extracted_data_json, action):
         elif action == "pi_only":
             name = create_purchase_invoice(data)
             results.append({"doctype": "Purchase Invoice", "name": name})
+        
+        # elif action == "so_to_si":
+        #     so = create_sales_order(data)
+        #     # Submit SO first
+        #     so_doc = frappe.get_doc("Sales Order", so)
+        #     so_doc.submit()
+        #     make_sales_invoice = frappe.get_attr(
+        #         "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
+        #     )
+        #     si = make_sales_invoice(so)
+        #     si_doc = frappe.get_doc("Sales Invoice", si.name if hasattr(si, 'name') else si)
+        #     si_doc.insert(ignore_permissions=True)
+
+        #     results.append({"doctype": "Sales Order", "name": so})
+        #     results.append({"doctype": "Sales Invoice", "name": si_doc.name})
+
+        # elif action == "po_to_pi":
+        #     po = create_purchase_order(data)
+        #     po_doc = frappe.get_doc("Purchase Order", po)
+        #     po_doc.submit()
+        #     make_purchase_invoice = frappe.get_attr(
+        #         "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice"
+        #     )
+        #     pi = make_purchase_invoice(po)
+        #     pi_doc = frappe.get_doc("Purchase Invoice", pi.name if hasattr(pi, 'name') else pi)
+        #     pi_doc.insert(ignore_permissions=True)
+        #     results.append({"doctype": "Purchase Order", "name": po})
+        #     results.append({"doctype": "Purchase Invoice", "name": pi_doc.name})
+        
+        elif action == "so_to_si":
+            so = create_sales_order(data)
+            so_doc = frappe.get_doc("Sales Order", so)
+            so_doc.submit()
+            make_si_fn = frappe.get_attr(
+                "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
+            )
+            si_doc = make_si_fn(so)          # returns unsaved doc
+            si_doc.insert(ignore_permissions=True)   # save it
+            results.append({"doctype": "Sales Order", "name": so})
+            results.append({"doctype": "Sales Invoice", "name": si_doc.name})
+
+        elif action == "po_to_pi":
+            po = create_purchase_order(data)
+            po_doc = frappe.get_doc("Purchase Order", po)
+            po_doc.submit()
+            make_pi_fn = frappe.get_attr(
+                "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice"
+            )
+            pi_doc = make_pi_fn(po)
+            pi_doc.insert(ignore_permissions=True)
+            results.append({"doctype": "Purchase Order", "name": po})
+            results.append({"doctype": "Purchase Invoice", "name": pi_doc.name})
 
         return {"success": True, "created": results}
 
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "AI Create Doc Error")
-        return {"success": False, "error": str(e)}
-      
+        return {"success": False, "error": str(e)}    
 
 @frappe.whitelist()
 def get_pending_emails():
@@ -151,9 +260,38 @@ def get_pending_emails():
     )
     return {"success": True, "items": items}
 
+# @frappe.whitelist()
+# def get_queue_item_detail(queue_name):
+#     doc = frappe.get_doc("AI Email Queue", queue_name)
+#     return {
+#         "success": True,
+#         "data": {
+#             "name": doc.name,
+#             "email_subject": doc.email_subject,
+#             "from_email": doc.from_email,
+#             "received_on": str(doc.received_on),
+#             "extracted": json.loads(doc.extracted_json or "{}"),
+#             "suggested_doctype": doc.suggested_doctype,
+#             "source_type": doc.source_type
+#         }
+#     }
+
 @frappe.whitelist()
 def get_queue_item_detail(queue_name):
     doc = frappe.get_doc("AI Email Queue", queue_name)
+    
+    # If email_body missing, fetch live from linked Communication
+    email_body = doc.email_body or ""
+    if not email_body and doc.communication_link:
+        try:
+            comm = frappe.get_doc("Communication", doc.communication_link)
+            email_body = comm.content or ""
+            # Save it so we don't fetch again
+            frappe.db.set_value("AI Email Queue", queue_name, 
+                "email_body", email_body[:5000])
+        except Exception:
+            email_body = "(Could not fetch email body)"
+
     return {
         "success": True,
         "data": {
@@ -163,7 +301,10 @@ def get_queue_item_detail(queue_name):
             "received_on": str(doc.received_on),
             "extracted": json.loads(doc.extracted_json or "{}"),
             "suggested_doctype": doc.suggested_doctype,
-            "source_type": doc.source_type
+            "source_type": doc.source_type,
+            "status": doc.status,
+            "created_document": doc.created_document or "",
+            "email_body": email_body
         }
     }
 
@@ -174,11 +315,13 @@ def process_queue_item(queue_name, action):
         doc = frappe.get_doc("AI Email Queue", queue_name)
         extracted = json.loads(doc.extracted_json)
 
-        result = frappe.call(
-            "ai_erpnext.api.create_from_extracted",
-            extracted_data_json=doc.extracted_json,
-            action=action
-        )
+        # result = frappe.call(
+        #     "ai_erpnext.api.create_from_extracted",
+        #     extracted_data_json=doc.extracted_json,
+        #     action=action
+        # )
+        from ai_erpnext.api import create_from_extracted
+        result = create_from_extracted(doc.extracted_json, action)
 
         # Mark as processed
         frappe.db.set_value("AI Email Queue", queue_name, {
@@ -275,3 +418,111 @@ def extract_queue_item(queue_name):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "On-Demand Extract Error")
         return {"success": False, "error": str(e)}
+
+# @frappe.whitelist()
+# def reextract_queue_item(queue_name):
+#     """Re-run Claude extraction on an already-queued item with updated prompt"""
+#     try:
+#         doc = frappe.get_doc("AI Email Queue", queue_name)
+        
+#         # Get email body
+#         body = doc.email_body or ""
+#         if not body and doc.communication_link:
+#             comm = frappe.get_doc("Communication", doc.communication_link)
+#             body = comm.content or ""
+
+#         if not body:
+#             return {"success": False, "error": "No email body to extract from"}
+
+#         from ai_erpnext.claude_helper import extract_from_email_text
+#         extracted = extract_from_email_text(body)
+
+#         frappe.db.set_value("AI Email Queue", queue_name, {
+#             "extracted_json": json.dumps(extracted, indent=2),
+#             "suggested_doctype": extracted.get("document_type", "Quotation")
+#         })
+#         frappe.db.commit()
+
+#         return {"success": True, "extracted": extracted}
+#     except Exception as e:
+#         frappe.log_error(frappe.get_traceback(), "Re-extract Error")
+#         return {"success": False, "error": str(e)}
+
+@frappe.whitelist()
+def reextract_queue_item(queue_name):
+    try:
+        doc = frappe.get_doc("AI Email Queue", queue_name)
+
+        extracted = None
+
+        # Try attachments from linked communication first
+        if doc.communication_link:
+            try:
+                comm = frappe.get_doc("Communication", doc.communication_link)
+                attachments = frappe.get_all("File",
+                    filters={
+                        "attached_to_doctype": "Communication",
+                        "attached_to_name": doc.communication_link
+                    },
+                    fields=["file_url", "file_name"]
+                )
+                for att in attachments:
+                    if not att.file_name:
+                        continue
+                    ext = att.file_name.split(".")[-1].lower()
+                    if ext not in ["pdf", "jpg", "jpeg", "png"]:
+                        continue
+                    file_path = os.path.join(
+                        frappe.get_site_path(), "public", att.file_url.lstrip("/")
+                    )
+                    if not os.path.exists(file_path):
+                        file_path = os.path.join(
+                            frappe.get_site_path(), att.file_url.lstrip("/")
+                        )
+                    if not os.path.exists(file_path):
+                        continue
+                    from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
+                    mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
+                               "png": "image/png"}
+                    extracted = extract_from_pdf(file_path) if ext == "pdf" \
+                               else extract_from_image(file_path, mime_map.get(ext, "image/jpeg"))
+                    if extracted and extracted.get("items"):
+                        break
+            except Exception as e:
+                frappe.log_error(str(e)[:5000], "ReExtract Attachment Error")
+
+        # Fallback to email body
+        if not extracted or not extracted.get("items"):
+            body = doc.email_body or ""
+            if not body and doc.communication_link:
+                try:
+                    comm = frappe.get_doc("Communication", doc.communication_link)
+                    body = comm.content or ""
+                except Exception:
+                    pass
+            if body:
+                from ai_erpnext.claude_helper import extract_from_email_text
+                extracted = extract_from_email_text(body)
+
+        if not extracted:
+            return {"success": False, "error": "Nothing to extract from"}
+
+        frappe.db.set_value("AI Email Queue", queue_name, {
+            "extracted_json": json.dumps(extracted, indent=2),
+            "suggested_doctype": extracted.get("document_type", "Quotation")
+        })
+        frappe.db.commit()
+        return {"success": True, "extracted": extracted}
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Re-extract Error")
+        return {"success": False, "error": str(e)}
+        
+@frappe.whitelist()
+def mark_queue_processed(queue_name, created_document=""):
+    frappe.db.set_value("AI Email Queue", queue_name, {
+        "status": "Processed",
+        "created_document": created_document
+    })
+    frappe.db.commit()
+    return {"success": True}

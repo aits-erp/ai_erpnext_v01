@@ -5,22 +5,18 @@ import frappe
 
 def get_claude_client():
     try:
-        import anthropic
+        import anthropic as _anthropic
     except ImportError:
-        frappe.throw(
-            "anthropic package missing. Run: bench pip install anthropic",
-            title="Missing Package"
-        )
+        frappe.throw("anthropic package missing. Run: bench pip install anthropic")
     
     api_key = (
-        os.environ.get("CLAUDE_API_KEY") or 
-        frappe.conf.get("claude_api_key") or
-        frappe.db.get_single_value("System Settings", "claude_api_key")
+        os.environ.get("CLAUDE_API_KEY") or
+        frappe.conf.get("claude_api_key")
     )
     if not api_key:
-        frappe.throw("Claude API key not configured in site config")
+        frappe.throw("Claude API key not configured")
     
-    return anthropic.Anthropic(api_key=api_key)
+    return _anthropic.Anthropic(api_key=api_key)
 
 # def get_claude_client():
 #     api_key = os.environ.get("CLAUDE_API_KEY") or frappe.conf.get("claude_api_key")
@@ -30,9 +26,8 @@ def get_claude_client():
 
 EXTRACTION_PROMPT = """
 You are a document data extractor. Extract ALL details from this document.
-Detect the document type and return ONLY valid JSON — no explanation, no markdown.
+Return ONLY valid JSON — no explanation, no markdown.
 
-Return this exact JSON structure:
 {
   "document_type": "Sales Order or Purchase Order or Sales Invoice or Purchase Invoice or Quotation",
   "customer_name": "",
@@ -43,18 +38,21 @@ Return this exact JSON structure:
   "items": [
     {
       "item_name": "",
+      "item_code": "",
       "description": "",
       "qty": 0,
       "uom": "Nos",
       "rate": 0,
       "amount": 0,
-      "hsn_code": ""
+      "hsn_code": "",
+      "tax_rate": 0
     }
   ],
   "taxes": [
     {
-      "tax_name": "GST 18%",
-      "tax_amount": 0
+      "tax_name": "",
+      "tax_amount": 0,
+      "tax_rate": 0
     }
   ],
   "total_before_tax": 0,
@@ -66,10 +64,10 @@ Return this exact JSON structure:
 }
 
 Rules:
-- If customer info present → document_type is Sales Order/Quotation/Sales Invoice
-- If supplier info present → document_type is Purchase Order/Purchase Invoice
-- If qty missing, default to 1
-- If rate missing but amount present, use amount as rate
+- Extract HSN/SAC code for every item — look in HSN column or HSN/SAC table at bottom of doc
+- If one HSN code applies to all items, use it for all
+- If item_code present in doc, use it, else leave empty
+- tax_rate = total GST % (CGST+SGST combined, e.g. 12 if 6+6)
 - Return ONLY the JSON object
 """
 

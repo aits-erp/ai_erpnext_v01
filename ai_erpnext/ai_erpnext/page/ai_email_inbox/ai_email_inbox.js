@@ -264,8 +264,10 @@ function open_inbox_modal(queue_name) {
         callback: function(r) {
             if (!r.message || !r.message.success) return;
             var d = r.message.data;
+            // _current_item = d;
+            // _current_item.extracted._queue_name = queue_name;
             _current_item = d;
-            _current_item.extracted._queue_name = queue_name;
+            _current_queue_name = queue_name;
 
             $('#imodal-subject').text(d.email_subject || '(No subject)');
             $('#imodal-meta').text(
@@ -319,21 +321,55 @@ function open_inbox_modal(queue_name) {
             }
 
             // Raw email
-            $('#imodal-raw-content').text(d.email_body || '(Email body not stored)');
+            // $('#imodal-raw-content').text(d.email_body || '(Email body not stored)');
+            $('#imodal-raw-content').html(d.email_body || '<em style="color:#aaa">(Email body not stored)</em>');
 
             // Actions
-            var isSale = !['Purchase Order','Purchase Invoice']
-                .includes(ext.document_type);
-            var actions = isSale ? [
-                {a:'quotation_only',    l:'📋 Quotation Only',             c:'#7c6fcd'},
-                {a:'so_only',           l:'📦 Sales Order Only',           c:'#2196F3'},
-                {a:'si_only',           l:'🧾 Sales Invoice Only',         c:'#4CAF50'},
-                {a:'quotation_to_so',   l:'📋 → 📦 Quotation + SO',       c:'#FF9800'},
-                {a:'quotation_so_si',   l:'📋 → 📦 → 🧾 Full Chain',      c:'#F44336'},
-            ] : [
-                {a:'po_only',           l:'📦 Purchase Order Only',        c:'#2196F3'},
-                {a:'pi_only',           l:'🧾 Purchase Invoice Only',      c:'#4CAF50'},
-            ];
+            var doc_type = (ext.document_type || "").toLowerCase();
+
+            // Define allowed actions per detected document type
+            var actions = [];
+
+            if (doc_type.includes("purchase invoice")) {
+                actions = [
+                    {a:'pi_only', l:'🧾 Purchase Invoice Only', c:'#4CAF50'}
+                ];
+            } else if (doc_type.includes("purchase order")) {
+                actions = [
+                    {a:'po_only',  l:'📦 Purchase Order Only',          c:'#2196F3'},
+                    {a:'pi_only',  l:'🧾 Purchase Invoice Only',         c:'#4CAF50'},
+                    {a:'po_to_pi', l:'📦 → 🧾 PO + Purchase Invoice',   c:'#FF9800'}
+                ];
+            } else if (doc_type.includes("sales invoice")) {
+                actions = [
+                    {a:'si_only', l:'🧾 Sales Invoice Only', c:'#4CAF50'}
+                ];
+            } else if (doc_type.includes("sales order")) {
+                actions = [
+                    {a:'so_only',        l:'📦 Sales Order Only',       c:'#2196F3'},
+                    {a:'si_only',        l:'🧾 Sales Invoice Only',      c:'#4CAF50'},
+                    {a:'so_to_si',       l:'📦 → 🧾 SO + Invoice',      c:'#FF9800'}
+                ];
+            } else {
+                // Quotation or unknown — show full sales chain
+                actions = [
+                    {a:'quotation_only',  l:'📋 Quotation Only',              c:'#7c6fcd'},
+                    {a:'so_only',         l:'📦 Sales Order Only',            c:'#2196F3'},
+                    {a:'si_only',         l:'🧾 Sales Invoice Only',          c:'#4CAF50'},
+                    {a:'quotation_to_so', l:'📋 → 📦 Quotation + SO',        c:'#FF9800'},
+                    {a:'quotation_so_si', l:'📋 → 📦 → 🧾 Full Chain',       c:'#F44336'}
+                ];
+            }
+
+            // Show detected type warning if mismatch
+            var warning = "";
+            if (doc_type.includes("invoice") && actions.length === 1) {
+                warning = `<div style="background:#fff3e0;border-left:4px solid #FF9800;
+                    padding:8px 12px;border-radius:4px;font-size:12px;margin-bottom:10px;color:#666">
+                    ⚠️ Detected as <strong>${ext.document_type}</strong> — 
+                    only relevant actions are shown
+                </div>`;
+            }
 
             var btns = actions.map(function(x) {
                 return `<button class="action-choice-btn"
@@ -350,7 +386,27 @@ function open_inbox_modal(queue_name) {
                     </div>`
                 );
             } else {
-                $('#imodal-actions').html(btns);
+                $('#imodal-actions').html(warning + btns);
+            }
+
+            // Only show if items are empty or missing HSN
+            var has_hsn = (d.extracted.items || []).every(i => i.hsn_code);
+            var has_items = (d.extracted.items || []).length > 0;
+
+            if (!has_items || !has_hsn) {
+                $('#imodal-actions').prepend(`
+                    <div style="width:100%; margin-bottom:12px; padding:10px; 
+                        background:#fff8e1; border-radius:6px; border-left:4px solid #ffc107;">
+                        <div style="font-size:12px; color:#666; margin-bottom:8px;">
+                            ⚠️ ${!has_items ? 'No items extracted.' : 'HSN codes missing.'} 
+                            Re-extract with updated AI prompt:
+                        </div>
+                        <button class="ai-btn ai-btn-primary ai-btn-sm" 
+                            id="reextract-btn" onclick="reextract_item('${queue_name}')">
+                            🔄 Re-extract with AI
+                        </button>
+                    </div>
+                `);
             }
 
             $('#inbox-modal-overlay').show();
@@ -384,8 +440,11 @@ function inbox_create(action, queue_name) {
                 $('#imodal-result').show();
 
                 frappe.call({
-                    method: 'ai_erpnext.api.ignore_queue_item',
-                    args: { queue_name: queue_name }
+                    method: 'ai_erpnext.api.mark_queue_processed',
+                    args: {
+                        queue_name: _current_queue_name, //changed from queue_name to _current_queue_name
+                        created_document: r.message.created[0].name
+                    }
                 });
                 setTimeout(function() {
                     close_inbox_modal();
@@ -414,6 +473,28 @@ function quick_ignore(queue_name) {
         callback: function() {
             frappe.show_alert({ message: 'Ignored', indicator: 'orange' });
             load_inbox();
+        }
+    });
+}
+
+function reextract_item(queue_name) {
+    $('#reextract-btn').prop('disabled', true).text('⏳ Extracting...');
+    frappe.call({
+        method: 'ai_erpnext.api.reextract_queue_item',
+        args: { queue_name: queue_name },
+        callback: function(r) {
+            if (r.message && r.message.success) {
+                frappe.show_alert({message: 'Re-extracted successfully', indicator: 'green'});
+                // Reload the modal with fresh data
+                close_inbox_modal();
+                setTimeout(function() { open_inbox_modal(queue_name); }, 300);
+            } else {
+                frappe.show_alert({
+                    message: (r.message && r.message.error) || 'Failed',
+                    indicator: 'red'
+                });
+                $('#reextract-btn').prop('disabled', false).text('🔄 Re-extract with AI');
+            }
         }
     });
 }
@@ -455,7 +536,7 @@ function inject_inbox_styles() {
         .imodal-tab.active { color:#5e64ff; border-bottom-color:#5e64ff; }
         .imodal-tab-content { display:none; }
         .imodal-tab-content.active { display:block; }
-        .imodal-raw-box { background:#1e1e1e; color:#d4d4d4; padding:16px; border-radius:8px; font-family:monospace; font-size:12px; max-height:280px; overflow-y:auto; white-space:pre-wrap; word-break:break-word; }
+        .imodal-raw-box { background:#ffffff; color:#333; padding:20px; border-radius:8px; font-family:Arial,sans-serif; font-size:13px; max-height:340px; overflow-y:auto; border:1px solid #eee; line-height:1.6; }
         .imodal-notes-box { background:#fffde7; border-left:4px solid #ffc107; padding:12px; border-radius:4px; font-size:13px; color:#555; }
         .section-label { font-size:12px; font-weight:700; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; }
         .action-grid { display:flex; flex-wrap:wrap; gap:8px; }
