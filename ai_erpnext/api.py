@@ -342,7 +342,13 @@ def ignore_queue_item(queue_name):
     return {"success": True}
 
 @frappe.whitelist()
-def get_email_queue(status="Pending", search="", page=1, page_length=20):
+def get_email_queue(
+    status="Pending",
+    search="",
+    page=1,
+    page_length=20,
+    sort_by="newest"
+):
 
     page = int(page)
     page_length = int(page_length)
@@ -368,14 +374,149 @@ def get_email_queue(status="Pending", search="", page=1, page_length=20):
             "suggested_doctype",
             "status",
             "created_document",
-            "source_type"
-        ],
-        order_by="received_on desc",
-        start=start,
-        limit_page_length=page_length
+            "source_type",
+            "email_body"
+        ]
     )
 
-    total_count = frappe.db.count("AI Email Queue", filters)
+    # Calculate importance score
+    for item in items:
+
+        score = 0
+
+        subject = (item.get("email_subject") or "").lower()
+        body = (item.get("email_body") or "").lower()
+
+        full_text = subject + " " + body
+
+        # HIGH PRIORITY KEYWORDS
+        high_priority = {
+            "urgent": 50,
+            "immediate": 45,
+            "payment overdue": 50,
+            "legal notice": 60,
+            "final reminder": 55,
+            "invoice overdue": 50,
+            "action required": 45,
+            "approval required": 45,
+            "pending approval": 40,
+            "security alert": 60,
+            "account suspended": 60,
+            "failed payment": 50,
+            "gst notice": 45,
+            "tax notice": 45
+        }
+
+        # BUSINESS IMPORTANT
+        medium_priority = {
+            "invoice": 30,
+            "purchase order": 30,
+            "sales order": 30,
+            "quotation": 25,
+            "rfq": 25,
+            "proforma": 25,
+            "payment": 25,
+            "remittance": 25,
+            "contract": 30,
+            "agreement": 30,
+            "shipment": 20,
+            "dispatch": 20,
+            "delivery": 20,
+            "vendor": 20,
+            "customer": 20,
+            "gst": 20,
+            "hsn": 15,
+            "compliance": 25,
+            "audit": 30,
+            "purchase": 20,
+            "sales": 20
+        }
+
+        # LOW PRIORITY / PROMOTIONAL
+        low_priority = {
+            "newsletter": -20,
+            "promotion": -25,
+            "discount": -15,
+            "offer": -15,
+            "sale": -10,
+            "marketing": -20,
+            "unsubscribe": -30,
+            "webinar": -15,
+            "event invitation": -15,
+            "free trial": -20
+        }
+
+        # Apply scores
+        for keyword, points in high_priority.items():
+
+            if keyword in full_text:
+                score += points
+
+        for keyword, points in medium_priority.items():
+
+            if keyword in full_text:
+                score += points
+
+        for keyword, points in low_priority.items():
+
+            if keyword in full_text:
+                score += points
+
+        # Attachment bonus
+        if item.get("source_type") == "Attachment":
+            score += 20
+
+        # Pending emails more important
+        if item.get("status") == "Pending":
+            score += 15
+
+        # Long emails slightly important
+        if len(body) > 1500:
+            score += 10
+
+        # Cap score
+        score = max(0, min(score, 100))
+
+        item["importance_score"] = score
+
+        # Optional label
+        if score >= 70:
+            item["importance_label"] = "High"
+
+        elif score >= 40:
+            item["importance_label"] = "Medium"
+
+        else:
+            item["importance_label"] = "Low"
+
+    # Apply sorting
+    if sort_by == "important":
+
+        items = sorted(
+            items,
+            key=lambda x: x.get("importance_score", 0),
+            reverse=True
+        )
+
+    elif sort_by == "oldest":
+
+        items = sorted(
+            items,
+            key=lambda x: x.get("received_on")
+        )
+
+    else:
+
+        items = sorted(
+            items,
+            key=lambda x: x.get("received_on"),
+            reverse=True
+        )
+
+    total_count = len(items)
+
+    # Pagination after sorting
+    items = items[start:start + page_length]
 
     counts = {
         "pending": frappe.db.count("AI Email Queue", {"status": "Pending"}),
@@ -397,16 +538,6 @@ def get_email_queue(status="Pending", search="", page=1, page_length=20):
             "total_pages": (total_count + page_length - 1) // page_length
         }
     }
-
-    counts = {
-        "pending": frappe.db.count("AI Email Queue", {"status": "Pending"}),
-        "ignored": frappe.db.count("AI Email Queue", {"status": "Ignored"}),
-        "processed_today": frappe.db.count("AI Email Queue", {
-            "status": "Processed",
-            "modified": [">=", today()]
-        })
-    }
-    return {"success": True, "items": items, "counts": counts}
 
 @frappe.whitelist()
 def check_dependencies():

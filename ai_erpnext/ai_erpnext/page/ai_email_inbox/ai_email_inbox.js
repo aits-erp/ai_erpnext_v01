@@ -53,7 +53,11 @@ function render_inbox(wrapper) {
                 <button class="delete-selected-btn">
                 🗑 Delete Selected
                </button>
-               
+               <select id="sort-filter" class="sort-filter">
+    <option value="newest"> Newest</option>
+    <option value="important"> Important</option>
+    <option value="oldest">Oldest</option>
+</select>
                 <input type="text" id="inbox-search"
                     placeholder="🔍 Search by subject or sender..."
                     class="inbox-search">
@@ -215,6 +219,14 @@ $(wrapper).on('click', '.select-mode-btn', function() {
 
     load_inbox();
 });
+// Sort change
+$(wrapper).on('change', '#sort-filter', function() {
+
+    _current_page = 1;
+
+    load_inbox();
+
+});
     // Search
     var search_timer;
     $('#inbox-search').on('input', function() {
@@ -263,6 +275,7 @@ function load_inbox() {
 
     var search = $('#inbox-search').val() || '';
     var status = _current_filter === 'All' ? '' : _current_filter;
+    var sort_by = $('#sort-filter').val() || 'newest';
 
     frappe.call({
         method: 'ai_erpnext.api.get_email_queue',
@@ -270,8 +283,8 @@ function load_inbox() {
               status: status,
                search: search,
               page: _current_page,
-               page_length: _page_length
-             },
+              page_length: _page_length,
+            sort_by: sort_by             },
         callback: function(r) {
             $('#inbox-loading').hide();
             if (!r.message || !r.message.success) return;
@@ -627,6 +640,7 @@ function reextract_item(queue_name) {
 
 function inject_inbox_styles() {
     $('<style>').text(`
+        
         .inbox-root { max-width:960px; margin:0 auto; padding:20px; }
         .inbox-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
         .stat-card { background:#fff; border:1px solid #eee; border-radius:10px; padding:16px; text-align:center; box-shadow:0 1px 4px rgba(0,0,0,0.04); }
@@ -636,18 +650,28 @@ function inject_inbox_styles() {
         .filter-btn { padding:7px 16px; border-radius:20px; border:1px solid #e0e0e0; background:#fff; cursor:pointer; font-size:13px; color:#666; transition:all 0.15s; }
         .filter-btn.active { background:#5e64ff; color:#fff; border-color:#5e64ff; }
          .delete-selected-btn {
-    background:#f5f5f5;
-    color:#333;
-    border:1px solid #ddd;
+    background:#fff;
+    color:#666;
+    border:1px solid #e0e0e0;
            color:grey;
-          border:none;
+          
             padding:7px 16px;
            border-radius:20px;
            cursor:pointer;
          font-size:13px;
                font-weight:600;
+          }
+               .sort-filter {
+    border:1px solid #e0e0e0;
+    border-radius:20px;
+    padding:7px 16px;
+    font-size:13px;
+    background:#fff;
+    color:#666;
+    outline:none;
+    cursor:pointer;
 }
-        .inbox-search { margin-left:auto; padding:7px 14px; border-radius:20px; border:1px solid #e0e0e0; font-size:13px; width:240px; outline:none; }
+        .inbox-search { margin-left:auto; padding:7px 14px; border-radius:20px; border:1px solid #e0e0e0; font-size:13px; width:225px; outline:none; }
         .inbox-loading { display:flex; align-items:center; gap:10px; color:#888; padding:30px 0; }
         .inbox-empty { text-align:center; padding:60px; color:#bbb; }
         .inbox-empty-sub { font-size:12px; margin-top:6px; }
