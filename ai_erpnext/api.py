@@ -342,20 +342,61 @@ def ignore_queue_item(queue_name):
     return {"success": True}
 
 @frappe.whitelist()
-def get_email_queue(status="Pending", search=""):
+def get_email_queue(status="Pending", search="", page=1, page_length=20):
+
+    page = int(page)
+    page_length = int(page_length)
+
     filters = {}
+
     if status:
         filters["status"] = status
+
     if search:
         filters["email_subject"] = ["like", f"%{search}%"]
 
-    items = frappe.get_all("AI Email Queue",
+    start = (page - 1) * page_length
+
+    items = frappe.get_all(
+        "AI Email Queue",
         filters=filters,
-        fields=["name","email_subject","from_email","received_on",
-                "suggested_doctype","status","created_document","source_type"],
+        fields=[
+            "name",
+            "email_subject",
+            "from_email",
+            "received_on",
+            "suggested_doctype",
+            "status",
+            "created_document",
+            "source_type"
+        ],
         order_by="received_on desc",
-        limit=100
+        start=start,
+        limit_page_length=page_length
     )
+
+    total_count = frappe.db.count("AI Email Queue", filters)
+
+    counts = {
+        "pending": frappe.db.count("AI Email Queue", {"status": "Pending"}),
+        "ignored": frappe.db.count("AI Email Queue", {"status": "Ignored"}),
+        "processed_today": frappe.db.count("AI Email Queue", {
+            "status": "Processed",
+            "modified": [">=", today()]
+        })
+    }
+
+    return {
+        "success": True,
+        "items": items,
+        "counts": counts,
+        "pagination": {
+            "page": page,
+            "page_length": page_length,
+            "total": total_count,
+            "total_pages": (total_count + page_length - 1) // page_length
+        }
+    }
 
     counts = {
         "pending": frappe.db.count("AI Email Queue", {"status": "Pending"}),
@@ -526,3 +567,22 @@ def mark_queue_processed(queue_name, created_document=""):
     })
     frappe.db.commit()
     return {"success": True}
+@frappe.whitelist()
+def delete_email_queue_items(names):
+
+    if isinstance(names, str):
+        names = json.loads(names)
+
+    for name in names:
+
+        frappe.delete_doc(
+            "AI Email Queue",
+            name,
+            force=True
+        )
+
+    frappe.db.commit()
+
+    return {
+        "success": True
+    }

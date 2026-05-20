@@ -50,9 +50,15 @@ function render_inbox(wrapper) {
                 <button class="filter-btn" data-status="All">
                     📋 All
                 </button>
+                <button class="delete-selected-btn">
+                🗑 Delete Selected
+               </button>
+               
                 <input type="text" id="inbox-search"
                     placeholder="🔍 Search by subject or sender..."
                     class="inbox-search">
+
+                    
             </div>
 
             <!-- Email List -->
@@ -67,6 +73,7 @@ function render_inbox(wrapper) {
                 </div>
             </div>
             <div id="inbox-list" style="display:none"></div>
+            <div id="pagination-bar" class="pagination-bar"></div>
 
         </div>
 
@@ -155,14 +162,84 @@ function render_inbox(wrapper) {
         _current_filter = $(this).data('status');
         load_inbox();
     });
+   // Delete selected emails
+$(wrapper).on('click', '.delete-selected-btn', function() {
 
+    if (selected_emails.length === 0) {
+        frappe.msgprint('Select emails first');
+        return;
+    }
+
+    frappe.confirm(
+        `Delete ${selected_emails.length} emails permanently?`,
+        function() {
+
+            frappe.call({
+                method: 'ai_erpnext.api.delete_email_queue_items',
+                args: {
+                    names: selected_emails
+                },
+                callback: function(r) {
+
+                    if (r.message.success) {
+
+                        frappe.show_alert({
+                            message: 'Emails deleted',
+                            indicator: 'green'
+                        });
+
+                        selected_emails = [];
+
+selection_mode = false;
+
+$('#pagination-bar').html('');
+
+load_inbox();
+                    }
+
+                }
+            });
+
+        }
+    );
+
+});
+// Toggle selection mode
+$(wrapper).on('click', '.select-mode-btn', function() {
+
+    selection_mode = !selection_mode;
+
+    if (!selection_mode) {
+        selected_emails = [];
+    }
+
+    load_inbox();
+});
     // Search
     var search_timer;
     $('#inbox-search').on('input', function() {
         clearTimeout(search_timer);
         search_timer = setTimeout(load_inbox, 400);
     });
+        // Email selection
+$(wrapper).on('change', '.email-checkbox', function() {
 
+    var name = $(this).data('name');
+
+    if ($(this).is(':checked')) {
+
+        if (!selected_emails.includes(name)) {
+            selected_emails.push(name);
+        }
+
+    } else {
+
+        selected_emails =
+            selected_emails.filter(x => x !== name);
+
+    }
+
+});
     // Modal inner tabs
     $(wrapper).on('click', '.imodal-tab', function() {
         var tab = $(this).data('tab');
@@ -172,9 +249,12 @@ function render_inbox(wrapper) {
         $(`#imodal-${tab}`).addClass('active');
     });
 }
-
+var _current_page = 1;
+var _page_length = 20;
 var _current_filter = 'Pending';
 var _current_item = null;
+var selected_emails = [];
+var selection_mode = false;
 
 function load_inbox() {
     $('#inbox-loading').show();
@@ -186,7 +266,12 @@ function load_inbox() {
 
     frappe.call({
         method: 'ai_erpnext.api.get_email_queue',
-        args: { status: status, search: search },
+       args: {
+              status: status,
+               search: search,
+              page: _current_page,
+               page_length: _page_length
+             },
         callback: function(r) {
             $('#inbox-loading').hide();
             if (!r.message || !r.message.success) return;
@@ -219,6 +304,11 @@ function load_inbox() {
 
                 return `
                 <div class="inbox-row" data-queue="${item.name}">
+                 ${selection_mode ? `
+<input type="checkbox"
+    class="email-checkbox"
+    data-name="${item.name}">
+` : ''}
                     <div class="inbox-row-left">
                         <div class="inbox-row-subject">
                             ${item.email_subject || '(No subject)'}
@@ -253,10 +343,46 @@ function load_inbox() {
             }).join('');
 
             $('#inbox-list').html(html).show();
+            render_pagination(r.message.pagination);
         }
     });
 }
+function render_pagination(pagination) {
 
+    if (!pagination) return;
+
+    var html = `
+        <button class="page-btn"
+            ${pagination.page <= 1 ? 'disabled' : ''}
+            onclick="change_page(${pagination.page - 1})">
+            ← Prev
+        </button>
+
+        <span class="page-info">
+            Page ${pagination.page} of ${pagination.total_pages}
+        </span>
+
+        <button class="page-btn"
+            ${pagination.page >= pagination.total_pages ? 'disabled' : ''}
+            onclick="change_page(${pagination.page + 1})">
+            Next →
+        </button>
+        <button class="page-btn select-mode-btn">
+    ${selection_mode ? 'Cancel' : 'Select'}
+</button>
+    `;
+
+    $('#pagination-bar').html(html);
+}
+
+
+function change_page(page) {
+
+    _current_page = page;
+
+    load_inbox();
+
+}
 function open_inbox_modal(queue_name) {
     frappe.call({
         method: 'ai_erpnext.api.get_queue_item_detail',
@@ -509,6 +635,18 @@ function inject_inbox_styles() {
         .inbox-filters { display:flex; align-items:center; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
         .filter-btn { padding:7px 16px; border-radius:20px; border:1px solid #e0e0e0; background:#fff; cursor:pointer; font-size:13px; color:#666; transition:all 0.15s; }
         .filter-btn.active { background:#5e64ff; color:#fff; border-color:#5e64ff; }
+         .delete-selected-btn {
+    background:#f5f5f5;
+    color:#333;
+    border:1px solid #ddd;
+           color:grey;
+          border:none;
+            padding:7px 16px;
+           border-radius:20px;
+           cursor:pointer;
+         font-size:13px;
+               font-weight:600;
+}
         .inbox-search { margin-left:auto; padding:7px 14px; border-radius:20px; border:1px solid #e0e0e0; font-size:13px; width:240px; outline:none; }
         .inbox-loading { display:flex; align-items:center; gap:10px; color:#888; padding:30px 0; }
         .inbox-empty { text-align:center; padding:60px; color:#bbb; }
@@ -560,6 +698,33 @@ function inject_inbox_styles() {
         .ai-table { width:100%; border-collapse:collapse; font-size:13px; }
         .ai-table th { background:#f5f5f5; padding:8px 10px; text-align:left; font-weight:600; color:#666; font-size:12px; }
         .ai-table td { padding:8px 10px; border-bottom:1px solid #f0f0f0; }
+        .pagination-bar {
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    gap:12px;
+    margin-top:20px;
+}
+
+.page-btn {
+    padding:8px 14px;
+    border:none;
+    background:#5e64ff;
+    color:white;
+    border-radius:6px;
+    cursor:pointer;
+    font-size:13px;
+}
+
+.page-btn:disabled {
+    opacity:0.4;
+    cursor:not-allowed;
+}
+
+.page-info {
+    font-size:13px;
+    color:#666;
+}
         @media(max-width:600px) { .inbox-row { flex-direction:column; align-items:flex-start; } .inbox-row-right { flex-wrap:wrap; } .ai-summary-grid { grid-template-columns:repeat(2,1fr); } .inbox-search { width:100%; margin-left:0; } }
     `).appendTo('head');
 }
