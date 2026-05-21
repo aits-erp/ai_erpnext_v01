@@ -83,7 +83,10 @@ def process_document(file_url):
     except json.JSONDecodeError:
         return {"success": False, "error": "AI could not parse the document. Try a clearer scan.", "stage": "parsing"}
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "AI Doc Error")
+        frappe.log_error(
+            title="AI Doc Error",
+            message=frappe.get_traceback()
+        )
         return {"success": False, "error": str(e), "stage": "unknown"}
 
 
@@ -245,8 +248,12 @@ def create_from_extracted(extracted_data_json, action):
         return {"success": True, "created": results}
 
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "AI Create Doc Error")
-        return {"success": False, "error": str(e)}    
+        frappe.log_error(
+            title="AI  create Doc Error",
+            message=frappe.get_traceback()
+        )
+        return {"success": False, "error": str(e), "stage": "unknown"}
+
 
 @frappe.whitelist()
 def get_pending_emails():
@@ -332,8 +339,12 @@ def process_queue_item(queue_name, action):
 
         return result
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "Queue Process Error")
-        return {"success": False, "error": str(e)}
+        frappe.log_error(
+            title="queue process error",
+            message=frappe.get_traceback()
+        )
+        return {"success": False, "error": str(e), "stage": "unknown"}
+
 
 @frappe.whitelist()
 def ignore_queue_item(queue_name):
@@ -588,8 +599,12 @@ def extract_queue_item(queue_name):
         
         return {"success": True, "extracted": extracted, "cached": False}
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "On-Demand Extract Error")
-        return {"success": False, "error": str(e)}
+        frappe.log_error(
+            title="on demend extraction error",
+            message=frappe.get_traceback()
+        )
+        return {"success": False, "error": str(e), "stage": "unknown"}
+
 
 # @frappe.whitelist()
 # def reextract_queue_item(queue_name):
@@ -661,7 +676,10 @@ def reextract_queue_item(queue_name):
                     if extracted and extracted.get("items"):
                         break
             except Exception as e:
-                frappe.log_error(str(e)[:5000], "ReExtract Attachment Error")
+                frappe.log_error(
+    title="ReExtract Attachment Error",
+    message=str(e)[:5000]
+)
 
         # Fallback to email body
         if not extracted or not extracted.get("items"):
@@ -687,7 +705,10 @@ def reextract_queue_item(queue_name):
         return {"success": True, "extracted": extracted}
 
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "Re-extract Error")
+        frappe.log_error(
+    title="Re-extract Error",
+    message=frappe.get_traceback()
+)
         return {"success": False, "error": str(e)}
         
 @frappe.whitelist()
