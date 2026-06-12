@@ -1,105 +1,161 @@
-# api.py — top of file, replace your current imports with this
-from pydoc import doc
+# # api.py — top of file, replace your current imports with this
+# from pydoc import doc
 
-import frappe
-import json
-import os
-from frappe.utils import today, now  # ← THIS was missing
-from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
-from ai_erpnext.erpnext_mapper import (
-    create_document,
-    create_quotation,
-    create_sales_order,
-    create_sales_invoice,
-    make_so_from_quotation,
-    make_si_from_so,
-    create_purchase_order,
-    create_purchase_invoice
-)
+# import frappe
+# import json
+# import os
+# from frappe.utils import today, now  # ← THIS was missing
+# from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
+# from ai_erpnext.erpnext_mapper import (
+#     create_document,
+#     create_quotation,
+#     create_sales_order,
+#     create_sales_invoice,
+#     make_so_from_quotation,
+#     make_si_from_so,
+#     create_purchase_order,
+#     create_purchase_invoice
+# )
 
-# api.py - add this before calling claude
-@frappe.whitelist()
-def process_document(file_url):
-    try:
-        # ── STEP 1: Validate file exists ──
-        file_doc = frappe.get_doc("File", {"file_url": file_url})
-        if not file_doc:
-            return {"success": False, "error": "File not found in system", "stage": "validation"}
+# # api.py - add this before calling claude
+# @frappe.whitelist()
+# def process_document(file_url):
+#     try:
+#         # ── STEP 1: Validate file exists ──
+#         file_doc = frappe.get_doc("File", {"file_url": file_url})
+#         if not file_doc:
+#             return {"success": False, "error": "File not found in system", "stage": "validation"}
 
-        site_path = frappe.get_site_path()
-        file_path = os.path.join(site_path, "public", file_doc.file_url.lstrip("/"))
+#         site_path = frappe.get_site_path()
+#         file_path = os.path.join(site_path, "public", file_doc.file_url.lstrip("/"))
 
-        if not os.path.exists(file_path):
-            return {"success": False, "error": "File missing on disk", "stage": "validation"}
+#         if not os.path.exists(file_path):
+#             return {"success": False, "error": "File missing on disk", "stage": "validation"}
 
-        # ── STEP 2: Validate file size (skip files >10MB) ──
-        size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        if size_mb > 10:
-            return {"success": False, "error": f"File too large ({size_mb:.1f}MB). Max 10MB.", "stage": "validation"}
+#         # ── STEP 2: Validate file size (skip files >10MB) ──
+#         size_mb = os.path.getsize(file_path) / (1024 * 1024)
+#         if size_mb > 10:
+#             return {"success": False, "error": f"File too large ({size_mb:.1f}MB). Max 10MB.", "stage": "validation"}
 
-        # ── STEP 3: Validate extension ──
-        ext = os.path.splitext(file_path)[1].lower()
-        allowed = [".pdf", ".jpg", ".jpeg", ".png", ".webp"]
-        if ext not in allowed:
-            return {"success": False, "error": f"File type {ext} not supported", "stage": "validation"}
+#         # ── STEP 3: Validate extension ──
+#         ext = os.path.splitext(file_path)[1].lower()
+#         allowed = [".pdf", ".jpg", ".jpeg", ".png", ".webp"]
+#         if ext not in allowed:
+#             return {"success": False, "error": f"File type {ext} not supported", "stage": "validation"}
 
-        # ── Only NOW call Claude ──
-        mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                    ".png": "image/png", ".webp": "image/webp"}
+#         # ── Only NOW call Claude ──
+#         mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+#                     ".png": "image/png", ".webp": "image/webp"}
 
-        # Lazy import (only when needed)
-        try:
-            from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
-        except ImportError:
-            return {
-                "success": False,
-                "error": "AI feature not available. Required module 'anthropic' is not installed.",
-                "stage": "dependency"
-            }
+#         # Lazy import (only when needed)
+#         try:
+#             from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
+#         except ImportError:
+#             return {
+#                 "success": False,
+#                 "error": "AI feature not available. Required module 'anthropic' is not installed.",
+#                 "stage": "dependency"
+#             }
 
-        if ext == ".pdf":
-            extracted = extract_from_pdf(file_path)
-        else:
-            extracted = extract_from_image(file_path, mime_map[ext])
+#         if ext == ".pdf":
+#             extracted = extract_from_pdf(file_path)
+#         else:
+#             extracted = extract_from_image(file_path, mime_map[ext])
 
-        # ── STEP 4: Validate Claude returned usable data ──
-        if not extracted.get("items") or len(extracted["items"]) == 0:
-            return {
-                "success": False,
-                "error": "No line items found in document. Is this a quotation/order/invoice?",
-                "stage": "extraction",
-                "raw_extracted": extracted  # show what Claude DID find
-            }
+#         # ── STEP 4: Validate Claude returned usable data ──
+#         if not extracted.get("items") or len(extracted["items"]) == 0:
+#             return {
+#                 "success": False,
+#                 "error": "No line items found in document. Is this a quotation/order/invoice?",
+#                 "stage": "extraction",
+#                 "raw_extracted": extracted  # show what Claude DID find
+#             }
 
-        # Return extracted data only — don't create doc yet
-        # User will choose action next (saves tokens, no wasted doc creation)
-        return {
-            "success": True,
-            "stage": "extracted",
-            "extracted_data": extracted,
-            "suggested_doctype": extracted.get("document_type", "Quotation")
-        }
+#         # Return extracted data only — don't create doc yet
+#         # User will choose action next (saves tokens, no wasted doc creation)
+#         return {
+#             "success": True,
+#             "stage": "extracted",
+#             "extracted_data": extracted,
+#             "suggested_doctype": extracted.get("document_type", "Quotation")
+#         }
 
-    except json.JSONDecodeError:
-        return {"success": False, "error": "AI could not parse the document. Try a clearer scan.", "stage": "parsing"}
-    except Exception as e:
-        frappe.log_error(
-            title="AI Doc Error",
-            message=frappe.get_traceback()
-        )
-        return {"success": False, "error": str(e), "stage": "unknown"}
+#     except json.JSONDecodeError:
+#         return {"success": False, "error": "AI could not parse the document. Try a clearer scan.", "stage": "parsing"}
+#     except Exception as e:
+#         frappe.log_error(
+#             title="AI Doc Error",
+#             message=frappe.get_traceback()
+#         )
+#         return {"success": False, "error": str(e), "stage": "unknown"}
 
 
-# ── Separate endpoint: called AFTER user confirms ──
+# # ── Separate endpoint: called AFTER user confirms ──
+# # @frappe.whitelist()
+# # def create_from_extracted(extracted_data_json, action):
+# #     """
+# #     action = "quotation_only" | "so_only" | "si_only" | 
+# #              "quotation_to_so" | "quotation_so_si" | "po_only" | "pi_only"
+# #     """
+# #     try:
+# #         import json as _json
+# #         data = _json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
+
+# #         results = []
+
+# #         if action == "quotation_only":
+# #             name = create_quotation(data)
+# #             results.append({"doctype": "Quotation", "name": name})
+
+# #         elif action == "so_only":
+# #             name = create_sales_order(data)
+# #             results.append({"doctype": "Sales Order", "name": name})
+
+# #         elif action == "si_only":
+# #             name = create_sales_invoice(data)
+# #             results.append({"doctype": "Sales Invoice", "name": name})
+
+# #         elif action == "quotation_to_so":
+# #             q = create_quotation(data)
+# #             so = make_so_from_quotation(q)
+# #             results.append({"doctype": "Quotation", "name": q})
+# #             results.append({"doctype": "Sales Order", "name": so})
+
+# #         elif action == "quotation_so_si":
+# #             q = create_quotation(data)
+# #             so = make_so_from_quotation(q)
+# #             si = make_si_from_so(so)
+# #             results.append({"doctype": "Quotation", "name": q})
+# #             results.append({"doctype": "Sales Order", "name": so})
+# #             results.append({"doctype": "Sales Invoice", "name": si})
+
+# #         elif action == "po_only":
+# #             name = create_purchase_order(data)
+# #             results.append({"doctype": "Purchase Order", "name": name})
+
+# #         elif action == "pi_only":
+# #             name = create_purchase_invoice(data)
+# #             results.append({"doctype": "Purchase Invoice", "name": name})
+
+# #         return {"success": True, "created": results}
+
+# #     except Exception as e:
+# #         frappe.log_error(frappe.get_traceback(), "AI Create Doc Error")
+# #         return {"success": False, "error": str(e)}
+
 # @frappe.whitelist()
 # def create_from_extracted(extracted_data_json, action):
-#     """
-#     action = "quotation_only" | "so_only" | "si_only" | 
-#              "quotation_to_so" | "quotation_so_si" | "po_only" | "pi_only"
-#     """
 #     try:
-#         import json as _json
-#         data = _json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
+#         data = json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
+
+#         # ── HSN Fallback: if any item missing HSN, try to find from notes/doc ──
+#         # Also find a common HSN from items that DO have it
+#         all_hsn = [i.get("hsn_code","") for i in data.get("items",[]) if i.get("hsn_code")]
+#         fallback_hsn = all_hsn[0] if all_hsn else ""
+
+#         for item in data.get("items", []):
+#             if not item.get("hsn_code") and fallback_hsn:
+#                 item["hsn_code"] = fallback_hsn
 
 #         results = []
 
@@ -136,21 +192,683 @@ def process_document(file_url):
 #         elif action == "pi_only":
 #             name = create_purchase_invoice(data)
 #             results.append({"doctype": "Purchase Invoice", "name": name})
+        
+#         # elif action == "so_to_si":
+#         #     so = create_sales_order(data)
+#         #     # Submit SO first
+#         #     so_doc = frappe.get_doc("Sales Order", so)
+#         #     so_doc.submit()
+#         #     make_sales_invoice = frappe.get_attr(
+#         #         "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
+#         #     )
+#         #     si = make_sales_invoice(so)
+#         #     si_doc = frappe.get_doc("Sales Invoice", si.name if hasattr(si, 'name') else si)
+#         #     si_doc.insert(ignore_permissions=True)
+
+#         #     results.append({"doctype": "Sales Order", "name": so})
+#         #     results.append({"doctype": "Sales Invoice", "name": si_doc.name})
+
+#         # elif action == "po_to_pi":
+#         #     po = create_purchase_order(data)
+#         #     po_doc = frappe.get_doc("Purchase Order", po)
+#         #     po_doc.submit()
+#         #     make_purchase_invoice = frappe.get_attr(
+#         #         "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice"
+#         #     )
+#         #     pi = make_purchase_invoice(po)
+#         #     pi_doc = frappe.get_doc("Purchase Invoice", pi.name if hasattr(pi, 'name') else pi)
+#         #     pi_doc.insert(ignore_permissions=True)
+#         #     results.append({"doctype": "Purchase Order", "name": po})
+#         #     results.append({"doctype": "Purchase Invoice", "name": pi_doc.name})
+        
+#         elif action == "so_to_si":
+#             so = create_sales_order(data)
+#             so_doc = frappe.get_doc("Sales Order", so)
+#             so_doc.submit()
+#             make_si_fn = frappe.get_attr(
+#                 "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
+#             )
+#             si_doc = make_si_fn(so)          # returns unsaved doc
+#             si_doc.insert(ignore_permissions=True)   # save it
+#             results.append({"doctype": "Sales Order", "name": so})
+#             results.append({"doctype": "Sales Invoice", "name": si_doc.name})
+
+#         elif action == "po_to_pi":
+#             po = create_purchase_order(data)
+#             po_doc = frappe.get_doc("Purchase Order", po)
+#             po_doc.submit()
+#             make_pi_fn = frappe.get_attr(
+#                 "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice"
+#             )
+#             pi_doc = make_pi_fn(po)
+#             pi_doc.insert(ignore_permissions=True)
+#             results.append({"doctype": "Purchase Order", "name": po})
+#             results.append({"doctype": "Purchase Invoice", "name": pi_doc.name})
 
 #         return {"success": True, "created": results}
 
 #     except Exception as e:
-#         frappe.log_error(frappe.get_traceback(), "AI Create Doc Error")
+#         frappe.log_error(
+#             title="AI  create Doc Error",
+#             message=frappe.get_traceback()
+#         )
+#         return {"success": False, "error": str(e), "stage": "unknown"}
+
+
+# @frappe.whitelist()
+# def get_pending_emails():
+#     """Get all unprocessed email queue items"""
+#     items = frappe.get_all("AI Email Queue",
+#         filters={"status": "Pending"},
+#         fields=["name", "email_subject", "from_email",
+#                 "received_on", "suggested_doctype", "source_type"],
+#         order_by="received_on desc",
+#         limit=50
+#     )
+#     return {"success": True, "items": items}
+
+# # @frappe.whitelist()
+# # def get_queue_item_detail(queue_name):
+# #     doc = frappe.get_doc("AI Email Queue", queue_name)
+# #     return {
+# #         "success": True,
+# #         "data": {
+# #             "name": doc.name,
+# #             "email_subject": doc.email_subject,
+# #             "from_email": doc.from_email,
+# #             "received_on": str(doc.received_on),
+# #             "extracted": json.loads(doc.extracted_json or "{}"),
+# #             "suggested_doctype": doc.suggested_doctype,
+# #             "source_type": doc.source_type
+# #         }
+# #     }
+
+# @frappe.whitelist()
+# def get_queue_item_detail(queue_name):
+#     doc = frappe.get_doc("AI Email Queue", queue_name)
+    
+#     # If email_body missing, fetch live from linked Communication
+#     email_body = doc.email_body or ""
+#     if not email_body and doc.communication_link:
+#         try:
+#             comm = frappe.get_doc("Communication", doc.communication_link)
+#             email_body = comm.content or ""
+#             # Save it so we don't fetch again
+#             frappe.db.set_value("AI Email Queue", queue_name, 
+#                 "email_body", email_body[:5000])
+#         except Exception:
+#             email_body = "(Could not fetch email body)"
+
+#     return {
+#         "success": True,
+#         "data": {
+#             "name": doc.name,
+#             "email_subject": doc.email_subject,
+#             "from_email": doc.from_email,
+#             "received_on": str(doc.received_on),
+#             "extracted": json.loads(doc.extracted_json or "{}"),
+#             "suggested_doctype": doc.suggested_doctype,
+#             "source_type": doc.source_type,
+#             "status": doc.status,
+#             "created_document": doc.created_document or "",
+#             "email_body": email_body
+#         }
+#     }
+
+# @frappe.whitelist()
+# def process_queue_item(queue_name, action):
+#     """User reviewed and confirmed — now create the doc"""
+#     try:
+#         doc = frappe.get_doc("AI Email Queue", queue_name)
+#         extracted = json.loads(doc.extracted_json)
+
+#         # result = frappe.call(
+#         #     "ai_erpnext.api.create_from_extracted",
+#         #     extracted_data_json=doc.extracted_json,
+#         #     action=action
+#         # )
+#         from ai_erpnext.api import create_from_extracted
+#         result = create_from_extracted(doc.extracted_json, action)
+
+#         # Mark as processed
+#         frappe.db.set_value("AI Email Queue", queue_name, {
+#             "status": "Processed",
+#             "created_document": result.get("created", [{}])[0].get("name", "")
+#         })
+#         frappe.db.commit()
+
+#         return result
+#     except Exception as e:
+#         frappe.log_error(
+#             title="queue process error",
+#             message=frappe.get_traceback()
+#         )
+#         return {"success": False, "error": str(e), "stage": "unknown"}
+
+
+# @frappe.whitelist()
+# def ignore_queue_item(queue_name):
+#     frappe.db.set_value("AI Email Queue", queue_name, "status", "Ignored")
+#     frappe.db.commit()
+#     return {"success": True}
+
+# @frappe.whitelist()
+# def get_email_queue(
+#     status="Pending",
+#     search="",
+#     page=1,
+#     page_length=20,
+#     sort_by="newest"
+# ):
+
+#     page = int(page)
+#     page_length = int(page_length)
+
+#     filters = {}
+
+#     if status:
+#         filters["status"] = status
+
+#     if search:
+#         filters["email_subject"] = ["like", f"%{search}%"]
+
+#     start = (page - 1) * page_length
+
+#     items = frappe.get_all(
+#         "AI Email Queue",
+#         filters=filters,
+#         fields=[
+#             "name",
+#             "email_subject",
+#             "from_email",
+#             "received_on",
+#             "suggested_doctype",
+#             "status",
+#             "created_document",
+#             "source_type",
+#             "email_body"
+#         ]
+#     )
+
+#     # Calculate importance score
+#     for item in items:
+
+#         score = 0
+
+#         subject = (item.get("email_subject") or "").lower()
+#         body = (item.get("email_body") or "").lower()
+
+#         full_text = subject + " " + body
+
+#         # HIGH PRIORITY KEYWORDS
+#         high_priority = {
+#             "urgent": 50,
+#             "immediate": 45,
+#             "payment overdue": 50,
+#             "legal notice": 60,
+#             "final reminder": 55,
+#             "invoice overdue": 50,
+#             "action required": 45,
+#             "approval required": 45,
+#             "pending approval": 40,
+#             "security alert": 60,
+#             "account suspended": 60,
+#             "failed payment": 50,
+#             "gst notice": 45,
+#             "tax notice": 45
+#         }
+
+#         # BUSINESS IMPORTANT
+#         medium_priority = {
+#             "invoice": 30,
+#             "purchase order": 30,
+#             "sales order": 30,
+#             "quotation": 25,
+#             "rfq": 25,
+#             "proforma": 25,
+#             "payment": 25,
+#             "remittance": 25,
+#             "contract": 30,
+#             "agreement": 30,
+#             "shipment": 20,
+#             "dispatch": 20,
+#             "delivery": 20,
+#             "vendor": 20,
+#             "customer": 20,
+#             "gst": 20,
+#             "hsn": 15,
+#             "compliance": 25,
+#             "audit": 30,
+#             "purchase": 20,
+#             "sales": 20
+#         }
+
+#         # LOW PRIORITY / PROMOTIONAL
+#         low_priority = {
+#             "newsletter": -20,
+#             "promotion": -25,
+#             "discount": -15,
+#             "offer": -15,
+#             "sale": -10,
+#             "marketing": -20,
+#             "unsubscribe": -30,
+#             "webinar": -15,
+#             "event invitation": -15,
+#             "free trial": -20
+#         }
+
+#         # Apply scores
+#         for keyword, points in high_priority.items():
+
+#             if keyword in full_text:
+#                 score += points
+
+#         for keyword, points in medium_priority.items():
+
+#             if keyword in full_text:
+#                 score += points
+
+#         for keyword, points in low_priority.items():
+
+#             if keyword in full_text:
+#                 score += points
+
+#         # Attachment bonus
+#         if item.get("source_type") == "Attachment":
+#             score += 20
+
+#         # Pending emails more important
+#         if item.get("status") == "Pending":
+#             score += 15
+
+#         # Long emails slightly important
+#         if len(body) > 1500:
+#             score += 10
+
+#         # Cap score
+#         score = max(0, min(score, 100))
+
+#         item["importance_score"] = score
+
+#         # Optional label
+#         if score >= 70:
+#             item["importance_label"] = "High"
+
+#         elif score >= 40:
+#             item["importance_label"] = "Medium"
+
+#         else:
+#             item["importance_label"] = "Low"
+
+#     # Apply sorting
+#     if sort_by == "important":
+
+#         items = sorted(
+#             items,
+#             key=lambda x: x.get("importance_score", 0),
+#             reverse=True
+#         )
+
+#     elif sort_by == "oldest":
+
+#         items = sorted(
+#             items,
+#             key=lambda x: x.get("received_on")
+#         )
+
+#     else:
+
+#         items = sorted(
+#             items,
+#             key=lambda x: x.get("received_on"),
+#             reverse=True
+#         )
+
+#     total_count = len(items)
+
+#     # Pagination after sorting
+#     items = items[start:start + page_length]
+
+#     counts = {
+#         "pending": frappe.db.count("AI Email Queue", {"status": "Pending"}),
+#         "ignored": frappe.db.count("AI Email Queue", {"status": "Ignored"}),
+#         "processed_today": frappe.db.count("AI Email Queue", {
+#             "status": "Processed",
+#             "modified": [">=", today()]
+#         })
+#     }
+
+#     return {
+#         "success": True,
+#         "items": items,
+#         "counts": counts,
+#         "pagination": {
+#             "page": page,
+#             "page_length": page_length,
+#             "total": total_count,
+#             "total_pages": (total_count + page_length - 1) // page_length
+#         }
+#     }
+
+# @frappe.whitelist()
+# def check_dependencies():
+#     results = {}
+    
+#     # Check anthropic
+#     try:
+#         import anthropic
+#         results["anthropic"] = anthropic.__version__
+#     except ImportError as e:
+#         results["anthropic"] = f"MISSING: {e}"
+    
+#     # Check API key
+#     api_key = os.environ.get("CLAUDE_API_KEY") or frappe.conf.get("claude_api_key")
+#     results["api_key_set"] = bool(api_key)
+#     results["api_key_source"] = "env" if os.environ.get("CLAUDE_API_KEY") else ("conf" if frappe.conf.get("claude_api_key") else "MISSING")
+    
+#     # Check PyMuPDF
+#     try:
+#         import fitz
+#         results["pymupdf"] = fitz.version
+#     except ImportError as e:
+#         results["pymupdf"] = f"MISSING: {e}"
+    
+#     return results
+
+# @frappe.whitelist()
+# def extract_queue_item(queue_name):
+#     """Called when user clicks Review on an unextracted email"""
+#     try:
+#         doc = frappe.get_doc("AI Email Queue", queue_name)
+#         existing = json.loads(doc.extracted_json or "{}")
+        
+#         # Already extracted
+#         if existing.get("items"):
+#             return {"success": True, "extracted": existing, "cached": True}
+        
+#         # Try extracting now
+#         from ai_erpnext.claude_helper import extract_from_email_text
+#         extracted = extract_from_email_text(doc.email_body or "")
+        
+#         # Save result back
+#         frappe.db.set_value("AI Email Queue", queue_name, {
+#             "extracted_json": json.dumps(extracted, indent=2),
+#             "suggested_doctype": extracted.get("document_type", "Unknown")
+#         })
+#         frappe.db.commit()
+        
+#         return {"success": True, "extracted": extracted, "cached": False}
+#     except Exception as e:
+#         frappe.log_error(
+#             title="on demend extraction error",
+#             message=frappe.get_traceback()
+#         )
+#         return {"success": False, "error": str(e), "stage": "unknown"}
+
+
+# # @frappe.whitelist()
+# # def reextract_queue_item(queue_name):
+# #     """Re-run Claude extraction on an already-queued item with updated prompt"""
+# #     try:
+# #         doc = frappe.get_doc("AI Email Queue", queue_name)
+        
+# #         # Get email body
+# #         body = doc.email_body or ""
+# #         if not body and doc.communication_link:
+# #             comm = frappe.get_doc("Communication", doc.communication_link)
+# #             body = comm.content or ""
+
+# #         if not body:
+# #             return {"success": False, "error": "No email body to extract from"}
+
+# #         from ai_erpnext.claude_helper import extract_from_email_text
+# #         extracted = extract_from_email_text(body)
+
+# #         frappe.db.set_value("AI Email Queue", queue_name, {
+# #             "extracted_json": json.dumps(extracted, indent=2),
+# #             "suggested_doctype": extracted.get("document_type", "Quotation")
+# #         })
+# #         frappe.db.commit()
+
+# #         return {"success": True, "extracted": extracted}
+# #     except Exception as e:
+# #         frappe.log_error(frappe.get_traceback(), "Re-extract Error")
+# #         return {"success": False, "error": str(e)}
+
+# @frappe.whitelist()
+# def reextract_queue_item(queue_name):
+#     try:
+#         doc = frappe.get_doc("AI Email Queue", queue_name)
+
+#         extracted = None
+
+#         # Try attachments from linked communication first
+#         if doc.communication_link:
+#             try:
+#                 comm = frappe.get_doc("Communication", doc.communication_link)
+#                 attachments = frappe.get_all("File",
+#                     filters={
+#                         "attached_to_doctype": "Communication",
+#                         "attached_to_name": doc.communication_link
+#                     },
+#                     fields=["file_url", "file_name"]
+#                 )
+#                 for att in attachments:
+#                     if not att.file_name:
+#                         continue
+#                     ext = att.file_name.split(".")[-1].lower()
+#                     if ext not in ["pdf", "jpg", "jpeg", "png"]:
+#                         continue
+#                     file_path = os.path.join(
+#                         frappe.get_site_path(), "public", att.file_url.lstrip("/")
+#                     )
+#                     if not os.path.exists(file_path):
+#                         file_path = os.path.join(
+#                             frappe.get_site_path(), att.file_url.lstrip("/")
+#                         )
+#                     if not os.path.exists(file_path):
+#                         continue
+#                     from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
+#                     mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
+#                                "png": "image/png"}
+#                     extracted = extract_from_pdf(file_path) if ext == "pdf" \
+#                                else extract_from_image(file_path, mime_map.get(ext, "image/jpeg"))
+#                     if extracted and extracted.get("items"):
+#                         break
+#             except Exception as e:
+#                 frappe.log_error(
+#     title="ReExtract Attachment Error",
+#     message=str(e)[:5000]
+# )
+
+#         # Fallback to email body
+#         if not extracted or not extracted.get("items"):
+#             body = doc.email_body or ""
+#             if not body and doc.communication_link:
+#                 try:
+#                     comm = frappe.get_doc("Communication", doc.communication_link)
+#                     body = comm.content or ""
+#                 except Exception:
+#                     pass
+#             if body:
+#                 from ai_erpnext.claude_helper import extract_from_email_text
+#                 extracted = extract_from_email_text(body)
+
+#         if not extracted:
+#             return {"success": False, "error": "Nothing to extract from"}
+
+#         frappe.db.set_value("AI Email Queue", queue_name, {
+#             "extracted_json": json.dumps(extracted, indent=2),
+#             "suggested_doctype": extracted.get("document_type", "Quotation")
+#         })
+#         frappe.db.commit()
+#         return {"success": True, "extracted": extracted}
+
+#     except Exception as e:
+#         frappe.log_error(
+#     title="Re-extract Error",
+#     message=frappe.get_traceback()
+# )
 #         return {"success": False, "error": str(e)}
+        
+# @frappe.whitelist()
+# def mark_queue_processed(queue_name, created_document=""):
+#     frappe.db.set_value("AI Email Queue", queue_name, {
+#         "status": "Processed",
+#         "created_document": created_document
+#     })
+#     frappe.db.commit()
+#     return {"success": True}
+# @frappe.whitelist()
+# def delete_email_queue_items(names):
+
+#     if isinstance(names, str):
+#         names = json.loads(names)
+
+#     for name in names:
+
+#         frappe.delete_doc(
+#             "AI Email Queue",
+#             name,
+#             force=True
+#         )
+
+#     frappe.db.commit()
+
+#     return {
+#         "success": True
+#     }
+# @frappe.whitelist()
+# def delete_all_email_queue_items(status=""):
+#     try:
+#         filters = {}
+#         if status:
+#             filters["status"] = status
+
+#         records = frappe.get_all(
+#             "AI Email Queue",
+#             filters=filters,
+#             fields=["name"]
+#         )
+
+#         count = 0
+#         for r in records:
+#             frappe.delete_doc(
+#                 "AI Email Queue",
+#                 r.name,
+#                 ignore_permissions=True
+#             )
+#             count += 1
+
+#         frappe.db.commit()
+
+#         return {
+#             "success": True,
+#             "deleted": count
+#         }
+
+#     except Exception as e:
+#         frappe.log_error(
+#             title="Delete All Email Queue Error",
+#             message=str(e)[:5000]
+#         )
+#         return {
+#             "success": False,
+#             "error": str(e)
+#         }
+
+
+
+from pydoc import doc
+
+import frappe
+import json
+import os
+from frappe.utils import cint
+from frappe.utils import today, now
+from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
+from ai_erpnext.erpnext_mapper import (
+    create_document,
+    create_quotation,
+    create_sales_order,
+    create_sales_invoice,
+    make_so_from_quotation,
+    make_si_from_so,
+    create_purchase_order,
+    create_purchase_invoice
+)
+
+
+@frappe.whitelist()
+def process_document(file_url):
+    try:
+        file_doc = frappe.get_doc("File", {"file_url": file_url})
+        if not file_doc:
+            return {"success": False, "error": "File not found in system", "stage": "validation"}
+
+        site_path = frappe.get_site_path()
+        file_path = os.path.join(site_path, "public", file_doc.file_url.lstrip("/"))
+
+        if not os.path.exists(file_path):
+            return {"success": False, "error": "File missing on disk", "stage": "validation"}
+
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        if size_mb > 10:
+            return {"success": False, "error": f"File too large ({size_mb:.1f}MB). Max 10MB.", "stage": "validation"}
+
+        ext = os.path.splitext(file_path)[1].lower()
+        allowed = [".pdf", ".jpg", ".jpeg", ".png", ".webp"]
+        if ext not in allowed:
+            return {"success": False, "error": f"File type {ext} not supported", "stage": "validation"}
+
+        mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".png": "image/png", ".webp": "image/webp"}
+
+        try:
+            from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
+        except ImportError:
+            return {
+                "success": False,
+                "error": "AI feature not available. Required module 'anthropic' is not installed.",
+                "stage": "dependency"
+            }
+
+        if ext == ".pdf":
+            extracted = extract_from_pdf(file_path)
+        else:
+            extracted = extract_from_image(file_path, mime_map[ext])
+
+        if not extracted.get("items") or len(extracted["items"]) == 0:
+            return {
+                "success": False,
+                "error": "No line items found in document. Is this a quotation/order/invoice?",
+                "stage": "extraction",
+                "raw_extracted": extracted
+            }
+
+        return {
+            "success": True,
+            "stage": "extracted",
+            "extracted_data": extracted,
+            "suggested_doctype": extracted.get("document_type", "Quotation")
+        }
+
+    except json.JSONDecodeError:
+        return {"success": False, "error": "AI could not parse the document. Try a clearer scan.", "stage": "parsing"}
+    except Exception as e:
+        frappe.log_error(
+            title="AI Doc Error",
+            message=frappe.get_traceback()
+        )
+        return {"success": False, "error": str(e), "stage": "unknown"}
+
 
 @frappe.whitelist()
 def create_from_extracted(extracted_data_json, action):
     try:
         data = json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
 
-        # ── HSN Fallback: if any item missing HSN, try to find from notes/doc ──
-        # Also find a common HSN from items that DO have it
-        all_hsn = [i.get("hsn_code","") for i in data.get("items",[]) if i.get("hsn_code")]
+        all_hsn = [i.get("hsn_code", "") for i in data.get("items", []) if i.get("hsn_code")]
         fallback_hsn = all_hsn[0] if all_hsn else ""
 
         for item in data.get("items", []):
@@ -192,35 +910,7 @@ def create_from_extracted(extracted_data_json, action):
         elif action == "pi_only":
             name = create_purchase_invoice(data)
             results.append({"doctype": "Purchase Invoice", "name": name})
-        
-        # elif action == "so_to_si":
-        #     so = create_sales_order(data)
-        #     # Submit SO first
-        #     so_doc = frappe.get_doc("Sales Order", so)
-        #     so_doc.submit()
-        #     make_sales_invoice = frappe.get_attr(
-        #         "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
-        #     )
-        #     si = make_sales_invoice(so)
-        #     si_doc = frappe.get_doc("Sales Invoice", si.name if hasattr(si, 'name') else si)
-        #     si_doc.insert(ignore_permissions=True)
 
-        #     results.append({"doctype": "Sales Order", "name": so})
-        #     results.append({"doctype": "Sales Invoice", "name": si_doc.name})
-
-        # elif action == "po_to_pi":
-        #     po = create_purchase_order(data)
-        #     po_doc = frappe.get_doc("Purchase Order", po)
-        #     po_doc.submit()
-        #     make_purchase_invoice = frappe.get_attr(
-        #         "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice"
-        #     )
-        #     pi = make_purchase_invoice(po)
-        #     pi_doc = frappe.get_doc("Purchase Invoice", pi.name if hasattr(pi, 'name') else pi)
-        #     pi_doc.insert(ignore_permissions=True)
-        #     results.append({"doctype": "Purchase Order", "name": po})
-        #     results.append({"doctype": "Purchase Invoice", "name": pi_doc.name})
-        
         elif action == "so_to_si":
             so = create_sales_order(data)
             so_doc = frappe.get_doc("Sales Order", so)
@@ -228,8 +918,8 @@ def create_from_extracted(extracted_data_json, action):
             make_si_fn = frappe.get_attr(
                 "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
             )
-            si_doc = make_si_fn(so)          # returns unsaved doc
-            si_doc.insert(ignore_permissions=True)   # save it
+            si_doc = make_si_fn(so)
+            si_doc.insert(ignore_permissions=True)
             results.append({"doctype": "Sales Order", "name": so})
             results.append({"doctype": "Sales Invoice", "name": si_doc.name})
 
@@ -249,7 +939,7 @@ def create_from_extracted(extracted_data_json, action):
 
     except Exception as e:
         frappe.log_error(
-            title="AI  create Doc Error",
+            title="AI create Doc Error",
             message=frappe.get_traceback()
         )
         return {"success": False, "error": str(e), "stage": "unknown"}
@@ -257,8 +947,8 @@ def create_from_extracted(extracted_data_json, action):
 
 @frappe.whitelist()
 def get_pending_emails():
-    """Get all unprocessed email queue items"""
-    items = frappe.get_all("AI Email Queue",
+    items = frappe.get_all(
+        "AI Email Queue",
         filters={"status": "Pending"},
         fields=["name", "email_subject", "from_email",
                 "received_on", "suggested_doctype", "source_type"],
@@ -267,35 +957,96 @@ def get_pending_emails():
     )
     return {"success": True, "items": items}
 
-# @frappe.whitelist()
-# def get_queue_item_detail(queue_name):
-#     doc = frappe.get_doc("AI Email Queue", queue_name)
-#     return {
-#         "success": True,
-#         "data": {
-#             "name": doc.name,
-#             "email_subject": doc.email_subject,
-#             "from_email": doc.from_email,
-#             "received_on": str(doc.received_on),
-#             "extracted": json.loads(doc.extracted_json or "{}"),
-#             "suggested_doctype": doc.suggested_doctype,
-#             "source_type": doc.source_type
-#         }
-#     }
+
+def _repair_email_queue_received_dates():
+    """Align queue dates with the original email Date stored on Communication."""
+    queue_items = frappe.get_all(
+        "AI Email Queue",
+        filters={"communication_link": ["is", "set"]},
+        fields=["name", "communication_link", "received_on"],
+    )
+
+    repaired = 0
+    for item in queue_items:
+        communication_date = frappe.db.get_value(
+            "Communication", item.communication_link, "communication_date"
+        )
+        if communication_date and str(item.received_on) != str(communication_date):
+            frappe.db.set_value(
+                "AI Email Queue",
+                item.name,
+                "received_on",
+                communication_date,
+                update_modified=False,
+            )
+            repaired += 1
+
+    return repaired
+
+
+@frappe.whitelist()
+def sync_ai_emails():
+    """Pull recent unread mail and advance the full historical Gmail sync."""
+    frappe.has_permission("Email Account", "read", throw=True)
+
+    accounts = frappe.get_all(
+        "Email Account",
+        filters={"enable_incoming": 1, "awaiting_password": 0},
+        pluck="name",
+    )
+    if not accounts:
+        return {
+            "success": False,
+            "error": "No enabled incoming Email Account was found.",
+        }
+
+    before_count = frappe.db.count("AI Email Queue")
+    synced_accounts = []
+    errors = []
+
+    for account_name in accounts:
+        try:
+            account = frappe.get_doc("Email Account", account_name)
+
+            # UNSEEN gets recent unread mail immediately. ALL then advances
+            # historical UID sync and captures newer messages that were read.
+            if cint(account.use_imap):
+                account.email_sync_option = "UNSEEN"
+                account.receive()
+                account.email_sync_option = "ALL"
+
+            account.receive()
+            synced_accounts.append(account_name)
+        except Exception:
+            errors.append(account_name)
+            frappe.log_error(
+                title=f"AI Email Sync Error: {account_name}",
+                message=frappe.get_traceback(),
+            )
+
+    repaired_dates = _repair_email_queue_received_dates()
+    frappe.db.commit()
+
+    return {
+        "success": bool(synced_accounts),
+        "synced_accounts": synced_accounts,
+        "failed_accounts": errors,
+        "new_emails": max(0, frappe.db.count("AI Email Queue") - before_count),
+        "repaired_dates": repaired_dates,
+    }
+
 
 @frappe.whitelist()
 def get_queue_item_detail(queue_name):
     doc = frappe.get_doc("AI Email Queue", queue_name)
-    
-    # If email_body missing, fetch live from linked Communication
+
     email_body = doc.email_body or ""
     if not email_body and doc.communication_link:
         try:
             comm = frappe.get_doc("Communication", doc.communication_link)
             email_body = comm.content or ""
-            # Save it so we don't fetch again
-            frappe.db.set_value("AI Email Queue", queue_name, 
-                "email_body", email_body[:5000])
+            frappe.db.set_value("AI Email Queue", queue_name,
+                                "email_body", email_body[:5000])
         except Exception:
             email_body = "(Could not fetch email body)"
 
@@ -315,22 +1066,16 @@ def get_queue_item_detail(queue_name):
         }
     }
 
+
 @frappe.whitelist()
 def process_queue_item(queue_name, action):
-    """User reviewed and confirmed — now create the doc"""
     try:
         doc = frappe.get_doc("AI Email Queue", queue_name)
         extracted = json.loads(doc.extracted_json)
 
-        # result = frappe.call(
-        #     "ai_erpnext.api.create_from_extracted",
-        #     extracted_data_json=doc.extracted_json,
-        #     action=action
-        # )
         from ai_erpnext.api import create_from_extracted
         result = create_from_extracted(doc.extracted_json, action)
 
-        # Mark as processed
         frappe.db.set_value("AI Email Queue", queue_name, {
             "status": "Processed",
             "created_document": result.get("created", [{}])[0].get("name", "")
@@ -352,6 +1097,7 @@ def ignore_queue_item(queue_name):
     frappe.db.commit()
     return {"success": True}
 
+
 @frappe.whitelist()
 def get_email_queue(
     status="Pending",
@@ -360,7 +1106,6 @@ def get_email_queue(
     page_length=20,
     sort_by="newest"
 ):
-
     page = int(page)
     page_length = int(page_length)
 
@@ -369,14 +1114,16 @@ def get_email_queue(
     if status:
         filters["status"] = status
 
-    if search:
-        filters["email_subject"] = ["like", f"%{search}%"]
-
     start = (page - 1) * page_length
 
+    # ── FIX: Search both subject AND sender ──
     items = frappe.get_all(
         "AI Email Queue",
         filters=filters,
+        or_filters=[
+            ["email_subject", "like", f"%{search}%"],
+            ["from_email", "like", f"%{search}%"]
+        ] if search else [],
         fields=[
             "name",
             "email_subject",
@@ -400,7 +1147,6 @@ def get_email_queue(
 
         full_text = subject + " " + body
 
-        # HIGH PRIORITY KEYWORDS
         high_priority = {
             "urgent": 50,
             "immediate": 45,
@@ -418,7 +1164,6 @@ def get_email_queue(
             "tax notice": 45
         }
 
-        # BUSINESS IMPORTANT
         medium_priority = {
             "invoice": 30,
             "purchase order": 30,
@@ -443,7 +1188,6 @@ def get_email_queue(
             "sales": 20
         }
 
-        # LOW PRIORITY / PROMOTIONAL
         low_priority = {
             "newsletter": -20,
             "promotion": -25,
@@ -457,67 +1201,51 @@ def get_email_queue(
             "free trial": -20
         }
 
-        # Apply scores
         for keyword, points in high_priority.items():
-
             if keyword in full_text:
                 score += points
 
         for keyword, points in medium_priority.items():
-
             if keyword in full_text:
                 score += points
 
         for keyword, points in low_priority.items():
-
             if keyword in full_text:
                 score += points
 
-        # Attachment bonus
         if item.get("source_type") == "Attachment":
             score += 20
 
-        # Pending emails more important
         if item.get("status") == "Pending":
             score += 15
 
-        # Long emails slightly important
         if len(body) > 1500:
             score += 10
 
-        # Cap score
         score = max(0, min(score, 100))
 
         item["importance_score"] = score
 
-        # Optional label
         if score >= 70:
             item["importance_label"] = "High"
-
         elif score >= 40:
             item["importance_label"] = "Medium"
-
         else:
             item["importance_label"] = "Low"
 
     # Apply sorting
     if sort_by == "important":
-
         items = sorted(
             items,
             key=lambda x: x.get("importance_score", 0),
             reverse=True
         )
-
     elif sort_by == "oldest":
-
         items = sorted(
             items,
             key=lambda x: x.get("received_on")
         )
-
     else:
-
         items = sorted(
             items,
             key=lambda x: x.get("received_on"),
@@ -550,90 +1278,59 @@ def get_email_queue(
         }
     }
 
+
 @frappe.whitelist()
 def check_dependencies():
     results = {}
-    
-    # Check anthropic
+
     try:
         import anthropic
         results["anthropic"] = anthropic.__version__
     except ImportError as e:
         results["anthropic"] = f"MISSING: {e}"
-    
-    # Check API key
+
     api_key = os.environ.get("CLAUDE_API_KEY") or frappe.conf.get("claude_api_key")
     results["api_key_set"] = bool(api_key)
-    results["api_key_source"] = "env" if os.environ.get("CLAUDE_API_KEY") else ("conf" if frappe.conf.get("claude_api_key") else "MISSING")
-    
-    # Check PyMuPDF
+    results["api_key_source"] = (
+        "env" if os.environ.get("CLAUDE_API_KEY")
+        else ("conf" if frappe.conf.get("claude_api_key") else "MISSING")
+    )
+
     try:
         import fitz
         results["pymupdf"] = fitz.version
     except ImportError as e:
         results["pymupdf"] = f"MISSING: {e}"
-    
+
     return results
+
 
 @frappe.whitelist()
 def extract_queue_item(queue_name):
-    """Called when user clicks Review on an unextracted email"""
     try:
         doc = frappe.get_doc("AI Email Queue", queue_name)
         existing = json.loads(doc.extracted_json or "{}")
-        
-        # Already extracted
+
         if existing.get("items"):
             return {"success": True, "extracted": existing, "cached": True}
-        
-        # Try extracting now
+
         from ai_erpnext.claude_helper import extract_from_email_text
         extracted = extract_from_email_text(doc.email_body or "")
-        
-        # Save result back
+
         frappe.db.set_value("AI Email Queue", queue_name, {
             "extracted_json": json.dumps(extracted, indent=2),
             "suggested_doctype": extracted.get("document_type", "Unknown")
         })
         frappe.db.commit()
-        
+
         return {"success": True, "extracted": extracted, "cached": False}
     except Exception as e:
         frappe.log_error(
-            title="on demend extraction error",
+            title="on demand extraction error",
             message=frappe.get_traceback()
         )
         return {"success": False, "error": str(e), "stage": "unknown"}
 
-
-# @frappe.whitelist()
-# def reextract_queue_item(queue_name):
-#     """Re-run Claude extraction on an already-queued item with updated prompt"""
-#     try:
-#         doc = frappe.get_doc("AI Email Queue", queue_name)
-        
-#         # Get email body
-#         body = doc.email_body or ""
-#         if not body and doc.communication_link:
-#             comm = frappe.get_doc("Communication", doc.communication_link)
-#             body = comm.content or ""
-
-#         if not body:
-#             return {"success": False, "error": "No email body to extract from"}
-
-#         from ai_erpnext.claude_helper import extract_from_email_text
-#         extracted = extract_from_email_text(body)
-
-#         frappe.db.set_value("AI Email Queue", queue_name, {
-#             "extracted_json": json.dumps(extracted, indent=2),
-#             "suggested_doctype": extracted.get("document_type", "Quotation")
-#         })
-#         frappe.db.commit()
-
-#         return {"success": True, "extracted": extracted}
-#     except Exception as e:
-#         frappe.log_error(frappe.get_traceback(), "Re-extract Error")
-#         return {"success": False, "error": str(e)}
 
 @frappe.whitelist()
 def reextract_queue_item(queue_name):
@@ -642,11 +1339,10 @@ def reextract_queue_item(queue_name):
 
         extracted = None
 
-        # Try attachments from linked communication first
         if doc.communication_link:
             try:
-                comm = frappe.get_doc("Communication", doc.communication_link)
-                attachments = frappe.get_all("File",
+                attachments = frappe.get_all(
+                    "File",
                     filters={
                         "attached_to_doctype": "Communication",
                         "attached_to_name": doc.communication_link
@@ -669,19 +1365,23 @@ def reextract_queue_item(queue_name):
                     if not os.path.exists(file_path):
                         continue
                     from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
-                    mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
-                               "png": "image/png"}
-                    extracted = extract_from_pdf(file_path) if ext == "pdf" \
-                               else extract_from_image(file_path, mime_map.get(ext, "image/jpeg"))
+                    mime_map = {
+                        "jpg": "image/jpeg",
+                        "jpeg": "image/jpeg",
+                        "png": "image/png"
+                    }
+                    extracted = (
+                        extract_from_pdf(file_path) if ext == "pdf"
+                        else extract_from_image(file_path, mime_map.get(ext, "image/jpeg"))
+                    )
                     if extracted and extracted.get("items"):
                         break
             except Exception as e:
                 frappe.log_error(
-    title="ReExtract Attachment Error",
-    message=str(e)[:5000]
-)
+                    title="ReExtract Attachment Error",
+                    message=str(e)[:5000]
+                )
 
-        # Fallback to email body
         if not extracted or not extracted.get("items"):
             body = doc.email_body or ""
             if not body and doc.communication_link:
@@ -706,11 +1406,12 @@ def reextract_queue_item(queue_name):
 
     except Exception as e:
         frappe.log_error(
-    title="Re-extract Error",
-    message=frappe.get_traceback()
-)
+            title="Re-extract Error",
+            message=frappe.get_traceback()
+        )
         return {"success": False, "error": str(e)}
-        
+
+
 @frappe.whitelist()
 def mark_queue_processed(queue_name, created_document=""):
     frappe.db.set_value("AI Email Queue", queue_name, {
@@ -719,14 +1420,14 @@ def mark_queue_processed(queue_name, created_document=""):
     })
     frappe.db.commit()
     return {"success": True}
+
+
 @frappe.whitelist()
 def delete_email_queue_items(names):
-
     if isinstance(names, str):
         names = json.loads(names)
 
     for name in names:
-
         frappe.delete_doc(
             "AI Email Queue",
             name,
@@ -734,7 +1435,44 @@ def delete_email_queue_items(names):
         )
 
     frappe.db.commit()
+    return {"success": True}
 
-    return {
-        "success": True
-    }
+
+@frappe.whitelist()
+def delete_all_email_queue_items(status=""):
+    try:
+        filters = {}
+        if status:
+            filters["status"] = status
+
+        records = frappe.get_all(
+            "AI Email Queue",
+            filters=filters,
+            fields=["name"]
+        )
+
+        count = 0
+        for r in records:
+            frappe.delete_doc(
+                "AI Email Queue",
+                r.name,
+                ignore_permissions=True
+            )
+            count += 1
+
+        frappe.db.commit()
+
+        return {
+            "success": True,
+            "deleted": count
+        }
+
+    except Exception as e:
+        frappe.log_error(
+            title="Delete All Email Queue Error",
+            message=str(e)[:5000]
+        )
+        return {
+            "success": False,
+            "error": str(e)
+        }

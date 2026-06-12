@@ -7,12 +7,20 @@ app_license = "mit"
 
 
 # Trigger on every new incoming email/communication
+# doc_events = {
+#     "Communication": {
+#         "after_insert": "ai_erpnext.email_processor.process_incoming_email",
+#         "on_update": "ai_erpnext.email_processor.process_on_update"
+#     }
+# }
+
 doc_events = {
     "Communication": {
-        "after_insert": "ai_erpnext.email_processor.process_incoming_email",
+        "after_insert": "ai_erpnext.email_processor.enqueue_incoming_email",
         "on_update": "ai_erpnext.email_processor.process_on_update"
     }
 }
+
 
 doctype_js = {
     "Sales Order":      "public/js/form_ai_button.js",

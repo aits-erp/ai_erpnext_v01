@@ -1,19 +1,572 @@
+# import frappe
+# import json
+# import os
+
+
+# def extract_from_excel(file_path):
+
+#     try:
+#         import pandas as pd
+
+#         # CSV SUPPORT
+#         if file_path.endswith(".csv"):
+
+#             try:
+#                 df = pd.read_csv(
+#                     file_path,
+#                     encoding="utf-8",
+#                     sep=None,
+#                     engine="python"
+#                 )
+
+#             except Exception:
+#                 df = pd.read_csv(
+#                     file_path,
+#                     encoding="latin1",
+#                     sep=None,
+#                     engine="python"
+#                 )
+
+#             df = df.fillna("")
+
+#             items = []
+
+#             cols = {
+#                 str(c).lower().strip(): c
+#                 for c in df.columns
+#             }
+
+#             for _, row in df.iterrows():
+
+#                 item = {
+#                     "item_name": "",
+#                     "item_code": "",
+#                     "description": "",
+#                     "qty": 0,
+#                     "uom": "Nos",
+#                     "rate": 0,
+#                     "amount": 0,
+#                     "hsn_code": "",
+#                     "tax_rate": 0
+#                 }
+
+#                 item["item_name"] = str(
+#                     row.get(
+#                         cols.get("item")
+#                         or cols.get("item_name")
+#                         or cols.get("description")
+#                         or cols.get("product"),
+#                         ""
+#                     )
+#                 ).strip()
+
+#                 item["description"] = item["item_name"]
+
+#                 try:
+#                     item["qty"] = float(
+#                         row.get(
+#                             cols.get("qty")
+#                             or cols.get("quantity"),
+#                             0
+#                         ) or 0
+#                     )
+#                 except Exception:
+#                     item["qty"] = 0
+
+#                 try:
+#                     item["rate"] = float(
+#                         row.get(
+#                             cols.get("rate")
+#                             or cols.get("price"),
+#                             0
+#                         ) or 0
+#                     )
+#                 except Exception:
+#                     item["rate"] = 0
+
+#                 try:
+#                     item["amount"] = float(
+#                         row.get(
+#                             cols.get("amount")
+#                             or cols.get("total"),
+#                             0
+#                         ) or (
+#                             item["qty"] * item["rate"]
+#                         )
+#                     )
+#                 except Exception:
+#                     item["amount"] = (
+#                         item["qty"] * item["rate"]
+#                     )
+
+#                 item["hsn_code"] = str(
+#                     row.get(
+#                         cols.get("hsn")
+#                         or cols.get("hsn_code"),
+#                         ""
+#                     )
+#                 ).strip()
+
+#                 if item["item_name"]:
+#                     items.append(item)
+
+#             frappe.log_error(
+#                 title="CSV DEBUG",
+#                 message=json.dumps(items[:5], indent=2)
+#             )
+
+#             return {
+#                 "document_type": "Sales Order",
+#                 "customer_name": "",
+#                 "supplier_name": "",
+#                 "document_date": "",
+#                 "document_number": "",
+#                 "due_date": "",
+#                 "items": items,
+#                 "taxes": [],
+#                 "total_before_tax": sum(
+#                     i["amount"] for i in items
+#                 ),
+#                 "total_tax": 0,
+#                 "grand_total": sum(
+#                     i["amount"] for i in items
+#                 ),
+#                 "currency": "INR",
+#                 "payment_terms": "",
+#                 "notes": "Extracted from CSV"
+#             }
+
+#         # EXCEL SUPPORT
+#         else:
+
+#             text_output = ""
+
+#             excel_data = pd.read_excel(
+#                 file_path,
+#                 sheet_name=None,
+#                 header=None
+#             )
+
+#             for sheet_name, df in excel_data.items():
+
+#                 text_output += f"\n\nSheet: {sheet_name}\n"
+
+#                 df = df.fillna("")
+
+#                 for _, row in df.iterrows():
+
+#                     row_text = " | ".join(
+#                         [
+#                             str(cell).strip()
+#                             for cell in row
+#                             if str(cell).strip()
+#                         ]
+#                     )
+
+#                     if row_text:
+#                         text_output += row_text + "\n"
+
+#             from ai_erpnext.claude_helper import (
+#                 extract_from_email_text
+#             )
+
+#             extracted = extract_from_email_text(
+#                 text_output
+#             )
+
+#             extracted["raw_text"] = text_output.strip()
+
+#             return extracted
+
+#     except Exception as e:
+
+#         frappe.log_error(
+#             title="Excel Extraction Error",
+#             message=str(e)[:5000]
+#         )
+
+#         return None
+
+
+# def process_incoming_email(doc, method):
+
+#     try:
+
+#         frappe.log_error(
+#             title="AI Hook Debug",
+#             message=f"doc={doc.name} s_o_r={doc.sent_or_received} subject={doc.subject}"
+#         )
+
+#         if doc.sent_or_received != "Received":
+#             return
+
+#         if doc.communication_type != "Communication":
+#             return
+
+#         if frappe.db.exists(
+#             "AI Email Queue",
+#             {"communication_link": doc.name}
+#         ):
+#             return
+
+#         body_lower = (doc.content or "").lower()
+
+#         keywords = [
+#             "quotation", "quote", "order", "invoice",
+#             "quantity", "amount", "total", "price",
+#             "rate", "item", "product", "service", "bill"
+#         ]
+
+#         keyword_hits = sum(
+#             1 for k in keywords
+#             if k in body_lower
+#         )
+
+#         attachments = frappe.get_all(
+#             "File",
+#             filters={
+#                 "attached_to_doctype": "Communication",
+#                 "attached_to_name": doc.name
+#             },
+#             fields=["file_url", "file_name"]
+#         )
+
+#         has_attachment = any(
+#             att.file_name and
+#             att.file_name.split(".")[-1].lower()
+#             in [
+#                 "pdf",
+#                 "jpg",
+#                 "jpeg",
+#                 "png",
+#                 "xlsx",
+#                 "xls",
+#                 "csv",
+#                 "webp"
+#             ]
+#             for att in attachments
+#         )
+
+#         extracted = None
+#         extraction_error = None
+
+#         # Try attachment first
+#         for att in attachments:
+
+#             if not att.file_name:
+#                 continue
+
+#             ext = att.file_name.split(".")[-1].lower()
+
+#             if ext not in [
+#                 "pdf",
+#                 "jpg",
+#                 "jpeg",
+#                 "png",
+#                 "webp",
+#                 "xlsx",
+#                 "xls",
+#                 "csv"
+#             ]:
+#                 continue
+
+#             try:
+
+#                 file_path = os.path.join(
+#                     frappe.get_site_path(),
+#                     "public",
+#                     att.file_url.lstrip("/")
+#                 )
+
+#                 if not os.path.exists(file_path):
+#                     file_path = os.path.join(
+#                         frappe.get_site_path(),
+#                         att.file_url.lstrip("/")
+#                     )
+
+#                 if not os.path.exists(file_path):
+#                     continue
+
+#                 from ai_erpnext.claude_helper import (
+#                     extract_from_pdf,
+#                     extract_from_image
+#                 )
+
+#                 mime_map = {
+#                     "jpg": "image/jpeg",
+#                     "jpeg": "image/jpeg",
+#                     "png": "image/png",
+#                     "webp": "image/webp"
+#                 }
+
+#                 if ext == "pdf":
+#                     extracted = extract_from_pdf(file_path)
+
+#                 elif ext in ["xlsx", "xls", "csv"]:
+#                     extracted = extract_from_excel(file_path)
+
+#                 else:
+#                     extracted = extract_from_image(
+#                         file_path,
+#                         mime_map[ext]
+#                     )
+
+#                 break
+
+#             except Exception as e:
+
+#                 extraction_error = str(e)
+
+#                 frappe.log_error(
+#                     title="AI Attachment Extract Error",
+#                     message=str(e)[:5000]
+#                 )
+
+#                 continue
+
+#         # Fallback to email body
+#         if not extracted and keyword_hits >= 2:
+
+#             try:
+
+#                 from ai_erpnext.claude_helper import (
+#                     extract_from_email_text
+#                 )
+
+#                 extracted = extract_from_email_text(
+#                     doc.content
+#                 )
+
+#             except Exception as e:
+
+#                 extraction_error = str(e)
+
+#                 frappe.log_error(
+#                     title="AI Email Body Error",
+#                     message=str(e)[:5000]
+#                 )
+
+#         # If still nothing, save as General Email
+#         if not extracted:
+#             extracted = {
+#                 "items": [],
+#                 "document_type": "General Email"
+#             }
+
+#         # Save queue
+#         try:
+
+#             queue_doc = frappe.get_doc({
+#                 "doctype": "AI Email Queue",
+#                 "email_subject": (
+#                     doc.subject or "(No Subject)"
+#                 )[:140],
+
+#                 "from_email": (
+#                     doc.sender or ""
+#                 )[:140],
+
+#                 "received_on": doc.creation,
+
+#                 "source_type": "Email",
+
+#                 "extracted_json": json.dumps(
+#                     extracted or {},
+#                     indent=2
+#                 ),
+
+#                 "suggested_doctype": (
+#                     extracted or {}
+#                 ).get(
+#                     "document_type",
+#                     "Pending Review"
+#                 ),
+
+#                 "status": "Pending",
+
+#                 "communication_link": doc.name,
+
+#                 "email_body": (
+#                     doc.content or ""
+#                 )[:5000]
+#             })
+
+#             queue_doc.insert(
+#                 ignore_permissions=True
+#             )
+
+#             frappe.db.commit()
+
+#         except Exception as e:
+
+#             frappe.log_error(
+#                 title="AI Queue Insert Error",
+#                 message=str(e)[:5000]
+#             )
+
+#     except Exception as e:
+
+#         frappe.log_error(
+#             title="AI Hook Outer Error",
+#             message=str(e)[:5000]
+#         )
+
+
+# def process_on_update(doc, method):
+
+#     if doc.sent_or_received != "Received":
+#         return
+
+#     queue = frappe.db.get_value(
+#         "AI Email Queue",
+#         {"communication_link": doc.name},
+#         ["name", "extracted_json"],
+#         as_dict=True
+#     )
+
+#     if not queue:
+#         process_incoming_email(doc, method)
+#         return
+
+#     try:
+#         existing = json.loads(
+#             queue.extracted_json or "{}"
+#         )
+#     except Exception:
+#         existing = {}
+
+#     if (
+#         existing.get("items")
+#         and len(existing.get("items")) > 0
+#     ):
+#         return
+
+#     attachments = frappe.get_all(
+#         "File",
+#         filters={
+#             "attached_to_doctype": "Communication",
+#             "attached_to_name": doc.name
+#         },
+#         fields=[
+#             "file_url",
+#             "file_name",
+#             "is_private"
+#         ]
+#     )
+
+#     for att in attachments:
+
+#         if not att.file_name:
+#             continue
+
+#         ext = att.file_name.split(".")[-1].lower()
+
+#         if ext not in [
+#             "pdf",
+#             "jpg",
+#             "jpeg",
+#             "png",
+#             "webp",
+#             "xlsx",
+#             "xls",
+#             "csv"
+#         ]:
+#             continue
+
+#         try:
+
+#             file_path = os.path.join(
+#                 frappe.get_site_path(),
+#                 "public",
+#                 att.file_url.lstrip("/")
+#             )
+
+#             if not os.path.exists(file_path):
+#                 file_path = os.path.join(
+#                     frappe.get_site_path(),
+#                     att.file_url.lstrip("/")
+#                 )
+
+#             if not os.path.exists(file_path):
+#                 continue
+
+#             from ai_erpnext.claude_helper import (
+#                 extract_from_pdf,
+#                 extract_from_image
+#             )
+
+#             mime_map = {
+#                 "jpg": "image/jpeg",
+#                 "jpeg": "image/jpeg",
+#                 "png": "image/png",
+#                 "webp": "image/webp"
+#             }
+
+#             if ext == "pdf":
+#                 extracted = extract_from_pdf(file_path)
+
+#             elif ext in ["xlsx", "xls", "csv"]:
+#                 extracted = extract_from_excel(file_path)
+
+#             else:
+#                 extracted = extract_from_image(
+#                     file_path,
+#                     mime_map[ext]
+#                 )
+
+#             if extracted:
+
+#                 frappe.db.set_value(
+#                     "AI Email Queue",
+#                     queue.name,
+#                     {
+#                         "extracted_json": json.dumps(
+#                             extracted,
+#                             indent=2
+#                         ),
+
+#                         "suggested_doctype": extracted.get(
+#                             "document_type",
+#                             "Spreadsheet Document"
+#                         ),
+
+#                         "source_type": f"Attachment: {att.file_name}"
+#                     }
+#                 )
+
+#                 frappe.db.commit()
+
+#                 frappe.log_error(
+#                     title="AI Hook Debug",
+#                     message=f"Updated {queue.name} with attachment data from on_update"
+#                 )
+
+#             break
+
+#         except Exception as e:
+
+#             frappe.log_error(
+#                 title="AI On Update Attachment Error",
+#                 message=str(e)[:5000]
+#             )
+
+
+
+
 import frappe
 import json
 import os
-import pandas as pd
 
 
 def extract_from_excel(file_path):
 
     try:
+        import pandas as pd
 
         # CSV SUPPORT
         if file_path.endswith(".csv"):
 
             try:
-
-                # Try UTF-8 first
                 df = pd.read_csv(
                     file_path,
                     encoding="utf-8",
@@ -22,8 +575,6 @@ def extract_from_excel(file_path):
                 )
 
             except Exception:
-
-                # Fallback encoding
                 df = pd.read_csv(
                     file_path,
                     encoding="latin1",
@@ -35,7 +586,6 @@ def extract_from_excel(file_path):
 
             items = []
 
-            # normalize column names
             cols = {
                 str(c).lower().strip(): c
                 for c in df.columns
@@ -55,7 +605,6 @@ def extract_from_excel(file_path):
                     "tax_rate": 0
                 }
 
-                # detect item column
                 item["item_name"] = str(
                     row.get(
                         cols.get("item")
@@ -68,9 +617,7 @@ def extract_from_excel(file_path):
 
                 item["description"] = item["item_name"]
 
-                # qty
                 try:
-
                     item["qty"] = float(
                         row.get(
                             cols.get("qty")
@@ -78,14 +625,10 @@ def extract_from_excel(file_path):
                             0
                         ) or 0
                     )
-
                 except Exception:
-
                     item["qty"] = 0
 
-                # rate
                 try:
-
                     item["rate"] = float(
                         row.get(
                             cols.get("rate")
@@ -93,14 +636,10 @@ def extract_from_excel(file_path):
                             0
                         ) or 0
                     )
-
                 except Exception:
-
                     item["rate"] = 0
 
-                # amount
                 try:
-
                     item["amount"] = float(
                         row.get(
                             cols.get("amount")
@@ -110,14 +649,11 @@ def extract_from_excel(file_path):
                             item["qty"] * item["rate"]
                         )
                     )
-
                 except Exception:
-
                     item["amount"] = (
                         item["qty"] * item["rate"]
                     )
 
-                # hsn
                 item["hsn_code"] = str(
                     row.get(
                         cols.get("hsn")
@@ -127,7 +663,6 @@ def extract_from_excel(file_path):
                 ).strip()
 
                 if item["item_name"]:
-
                     items.append(item)
 
             frappe.log_error(
@@ -184,7 +719,6 @@ def extract_from_excel(file_path):
                     )
 
                     if row_text:
-
                         text_output += row_text + "\n"
 
             from ai_erpnext.claude_helper import (
@@ -207,6 +741,79 @@ def extract_from_excel(file_path):
         )
 
         return None
+
+
+def enqueue_incoming_email(doc, method=None):
+    """Schedule processing only after Communication is saved."""
+
+    if doc.sent_or_received != "Received":
+        return
+
+    if doc.communication_type != "Communication":
+        return
+
+    try:
+        frappe.enqueue(
+            method="ai_erpnext.email_processor.process_committed_email",
+            queue="short",
+            enqueue_after_commit=True,
+            eta=10,  # Wait 10 seconds so DB commit is fully visible
+            communication_name=doc.name,
+        )
+    except Exception:
+        # Never allow AI processing to stop Frappe from receiving an email.
+        frappe.log_error(
+            title="AI Email Enqueue Error",
+            message=frappe.get_traceback(),
+        )
+
+
+def process_committed_email(communication_name, _retry=0):
+    """Create AI queue record after Communication is committed.
+
+    Retries up to 3 times (with 5-second gaps) in case the worker
+    picks up the job before the DB transaction is fully visible.
+    """
+
+    MAX_RETRIES = 3
+    RETRY_DELAY = 5  # seconds
+
+    if not frappe.db.exists("Communication", communication_name):
+
+        if _retry < MAX_RETRIES:
+            frappe.log_error(
+                title="AI Email Comm Not Found — Retrying",
+                message=(
+                    f"Communication {communication_name} not found. "
+                    f"Retry {_retry + 1}/{MAX_RETRIES} in {RETRY_DELAY}s."
+                ),
+            )
+            frappe.enqueue(
+                method="ai_erpnext.email_processor.process_committed_email",
+                queue="short",
+                eta=RETRY_DELAY,
+                communication_name=communication_name,
+                _retry=_retry + 1,
+            )
+        else:
+            frappe.log_error(
+                title="AI Email Communication Missing",
+                message=(
+                    f"Communication {communication_name} not found "
+                    f"after {MAX_RETRIES} retries. Giving up."
+                ),
+            )
+        return
+
+    if frappe.db.exists(
+        "AI Email Queue",
+        {"communication_link": communication_name},
+    ):
+        return
+
+    communication = frappe.get_doc("Communication", communication_name)
+    process_incoming_email(communication, "after_commit")
+
 
 def process_incoming_email(doc, method):
 
@@ -267,13 +874,6 @@ def process_incoming_email(doc, method):
             for att in attachments
         )
 
-        if keyword_hits < 2 and not has_attachment:
-
-            extracted = {
-                "items": [],
-                "document_type": "General Email"
-            }
-
         extracted = None
         extraction_error = None
 
@@ -305,9 +905,7 @@ def process_incoming_email(doc, method):
                     att.file_url.lstrip("/")
                 )
 
-                # Try private path if public missing
                 if not os.path.exists(file_path):
-
                     file_path = os.path.join(
                         frappe.get_site_path(),
                         att.file_url.lstrip("/")
@@ -328,19 +926,13 @@ def process_incoming_email(doc, method):
                     "webp": "image/webp"
                 }
 
-                # PDF
                 if ext == "pdf":
-
                     extracted = extract_from_pdf(file_path)
 
-                # Excel / CSV
                 elif ext in ["xlsx", "xls", "csv"]:
-
                     extracted = extract_from_excel(file_path)
 
-                # Images
                 else:
-
                     extracted = extract_from_image(
                         file_path,
                         mime_map[ext]
@@ -359,27 +951,28 @@ def process_incoming_email(doc, method):
 
                 continue
 
-        # Fallback to email body
-        if not extracted and keyword_hits >= 2:
-
+        # Always fallback to email body
+        if not extracted:
             try:
-
                 from ai_erpnext.claude_helper import (
                     extract_from_email_text
                 )
-
                 extracted = extract_from_email_text(
-                    doc.content
+                    doc.content or ""
                 )
-
             except Exception as e:
-
                 extraction_error = str(e)
-
                 frappe.log_error(
                     title="AI Email Body Error",
                     message=str(e)[:5000]
                 )
+
+        # Always save every email even if extraction failed
+        if not extracted:
+            extracted = {
+                "items": [],
+                "document_type": "General Email"
+            }
 
         # Save queue
         try:
@@ -394,7 +987,7 @@ def process_incoming_email(doc, method):
                     doc.sender or ""
                 )[:140],
 
-                "received_on": doc.creation,
+                "received_on": doc.communication_date or doc.creation,
 
                 "source_type": "Email",
 
@@ -445,6 +1038,10 @@ def process_on_update(doc, method):
     if doc.sent_or_received != "Received":
         return
 
+    # Ensure Communication exists before processing
+    if not frappe.db.exists("Communication", doc.name):
+        return
+
     queue = frappe.db.get_value(
         "AI Email Queue",
         {"communication_link": doc.name},
@@ -453,22 +1050,16 @@ def process_on_update(doc, method):
     )
 
     if not queue:
-
-        process_incoming_email(doc, method)
-
+        enqueue_incoming_email(doc, method)
         return
 
     try:
-
         existing = json.loads(
             queue.extracted_json or "{}"
         )
-
     except Exception:
-
         existing = {}
 
-    # Only skip if real extraction already exists
     if (
         existing.get("items")
         and len(existing.get("items")) > 0
@@ -516,7 +1107,6 @@ def process_on_update(doc, method):
             )
 
             if not os.path.exists(file_path):
-
                 file_path = os.path.join(
                     frappe.get_site_path(),
                     att.file_url.lstrip("/")
@@ -538,23 +1128,12 @@ def process_on_update(doc, method):
             }
 
             if ext == "pdf":
+                extracted = extract_from_pdf(file_path)
 
-                extracted = extract_from_pdf(
-                    file_path
-                )
-
-            elif ext in [
-                "xlsx",
-                "xls",
-                "csv"
-            ]:
-
-                extracted = extract_from_excel(
-                    file_path
-                )
+            elif ext in ["xlsx", "xls", "csv"]:
+                extracted = extract_from_excel(file_path)
 
             else:
-
                 extracted = extract_from_image(
                     file_path,
                     mime_map[ext]
