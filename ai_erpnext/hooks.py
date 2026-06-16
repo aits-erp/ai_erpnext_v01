@@ -18,6 +18,9 @@ doc_events = {
     "Communication": {
         "after_insert": "ai_erpnext.email_processor.enqueue_incoming_email",
         "on_update": "ai_erpnext.email_processor.process_on_update"
+    },
+    "File": {
+        "after_insert": "ai_erpnext.email_processor.process_file_attachment"
     }
 }
 
@@ -30,5 +33,4 @@ doctype_js = {
     "Purchase Invoice": "public/js/form_ai_button.js",
     "Api Controller": "public/js/api_controller.js",
 }
-
 
