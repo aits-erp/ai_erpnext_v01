@@ -5,7 +5,7 @@ frappe.pages['ai_email_inbox'].on_page_load = function(wrapper) {
         single_column: true
     });
 
-    page.add_button('🔄 Sync Gmail', function() { sync_gmail_and_load_inbox(); });
+    page.add_button('🔄 Sync Gmail', function() { sync_gmail_and_load_inbox(false); });
     page.add_button('⚙️ Email Settings', function() {
         frappe.set_route('List', 'Email Account');
     });
@@ -13,7 +13,6 @@ frappe.pages['ai_email_inbox'].on_page_load = function(wrapper) {
     inject_inbox_styles();
     render_inbox(wrapper);
     load_inbox();
-    setInterval(load_inbox, 30000);
 };
 
 function render_inbox(wrapper) {
@@ -25,6 +24,10 @@ function render_inbox(wrapper) {
                 <div class="stat-card" id="stat-pending">
                     <div class="stat-num">0</div>
                     <div class="stat-label">Pending</div>
+                </div>
+                <div class="stat-card" id="stat-documents">
+                    <div class="stat-num">0</div>
+                    <div class="stat-label">Documents</div>
                 </div>
                 <div class="stat-card" id="stat-processed">
                     <div class="stat-num">0</div>
@@ -39,6 +42,7 @@ function render_inbox(wrapper) {
             <!-- Filter Bar Row 1: Status filters + action buttons -->
             <div class="inbox-filters">
                 <button class="filter-btn active" data-status="Pending">🕐 Pending</button>
+                <button class="filter-btn" data-status="Documents">📄 Documents</button>
                 <button class="filter-btn" data-status="Processed">✅ Processed</button>
                 <button class="filter-btn" data-status="Ignored">🗑️ Ignored</button>
                 <button class="filter-btn" data-status="All">📋 All</button>
@@ -269,16 +273,18 @@ var _current_page_names = [];
 var _search_timer   = null;
 var _sync_in_progress = false;
 
-function sync_gmail_and_load_inbox() {
+function sync_gmail_and_load_inbox(full_sync) {
     if (_sync_in_progress) return;
 
     _sync_in_progress = true;
-    frappe.show_alert({ message: 'Pulling recent and older emails...', indicator: 'blue' }, 10);
+    frappe.show_alert({
+        message: full_sync ? 'Starting full Gmail sync in background...' : 'Checking Gmail for new emails...',
+        indicator: 'blue'
+    }, 8);
 
     frappe.call({
-        method: 'ai_erpnext.api.sync_ai_emails',
-        freeze: true,
-        freeze_message: 'Syncing Gmail emails...',
+        method: 'ai_erpnext.api.sync_ai_emails_background',
+        args: { full_sync: full_sync ? 1 : 0 },
         callback: function(r) {
             var result = r.message || {};
             if (!result.success) {
@@ -286,15 +292,12 @@ function sync_gmail_and_load_inbox() {
                 return;
             }
 
-            var message = `Email sync complete: ${result.new_emails || 0} new email(s)`;
-            if (result.repaired_dates) {
-                message += `, ${result.repaired_dates} date(s) corrected`;
-            }
-            if ((result.failed_accounts || []).length) {
-                message += '. Some accounts failed; check Error Log.';
-            }
-            frappe.show_alert({ message: message, indicator: 'green' }, 8);
-            _current_page = 1;
+            frappe.show_alert({
+                message: full_sync
+                    ? 'Full Gmail sync is running. Use this only for first setup/history import.'
+                    : 'New-email sync is running. Inbox will refresh automatically.',
+                indicator: 'green'
+            }, 8);
             load_inbox();
         },
         always: function() {
@@ -333,7 +336,8 @@ function load_inbox() {
     $('#inbox-empty').hide();
 
     var search  = $('#inbox-search').val() || '';
-    var status  = _current_filter === 'All' ? '' : _current_filter;
+    var business_only = _current_filter === 'Documents';
+    var status  = (_current_filter === 'All' || business_only) ? '' : _current_filter;
 
     frappe.call({
         method: 'ai_erpnext.api.get_email_queue',
@@ -342,7 +346,8 @@ function load_inbox() {
             search:      search,
             page:        _current_page,
             page_length: _page_length,
-            sort_by:     'newest'
+            sort_by:     'newest',
+            business_only: business_only ? 1 : 0
         },
         callback: function(r) {
             $('#inbox-loading').hide();
@@ -352,6 +357,7 @@ function load_inbox() {
             var counts = r.message.counts || {};
 
             $('#stat-pending .stat-num').text(counts.pending || 0);
+            $('#stat-documents .stat-num').text(counts.documents || 0);
             $('#stat-processed .stat-num').text(counts.processed_today || 0);
             $('#stat-ignored .stat-num').text(counts.ignored || 0);
 
@@ -421,6 +427,9 @@ function load_inbox() {
                         ${item.status === 'Pending' ? `
                             <button class="ai-btn ai-btn-primary ai-btn-sm" onclick="open_inbox_modal('${item.name}')">Review →</button>
                             <button class="ai-btn ai-btn-ghost ai-btn-sm" onclick="quick_ignore('${item.name}')">Ignore</button>
+                        ` : item.status === 'Ignored' ? `
+                            <button class="ai-btn ai-btn-primary ai-btn-sm" onclick="restore_item('${item.name}')">Restore</button>
+                            <button class="ai-btn ai-btn-ghost ai-btn-sm" onclick="open_inbox_modal('${item.name}')">View</button>
                         ` : `
                             <button class="ai-btn ai-btn-ghost ai-btn-sm" onclick="open_inbox_modal('${item.name}')">View</button>
                         `}
@@ -572,6 +581,13 @@ function open_inbox_modal(queue_name) {
 
             if (d.status === 'Processed') {
                 $('#imodal-actions').html(`<div style="color:#888;font-size:13px">Already processed: ${d.created_document || ''}</div>`);
+            } else if (d.status === 'Ignored') {
+                $('#imodal-actions').html(`
+                    <div style="width:100%;margin-bottom:10px;color:#777;font-size:13px">
+                        This email is ignored. Restore it to Pending before creating a document.
+                    </div>
+                    <button class="action-choice-btn" style="border-left:4px solid #5e64ff" onclick="restore_item('${queue_name}')">↩ Restore to Pending</button>
+                `);
             } else {
                 $('#imodal-actions').html(warning + btns);
             }
@@ -735,6 +751,26 @@ function quick_ignore(queue_name) {
     });
 }
 
+function restore_item(queue_name) {
+    frappe.call({
+        method: 'ai_erpnext.api.restore_queue_item',
+        args: { queue_name: queue_name },
+        callback: function(r) {
+            if (r.message && r.message.success) {
+                frappe.show_alert({ message: 'Restored to Pending', indicator: 'green' });
+                close_inbox_modal();
+                _current_filter = 'Pending';
+                $('.filter-btn').removeClass('active');
+                $('.filter-btn[data-status="Pending"]').addClass('active');
+                _current_page = 1;
+                load_inbox();
+            } else {
+                frappe.show_alert({ message: 'Restore failed', indicator: 'red' });
+            }
+        }
+    });
+}
+
 function reextract_item(queue_name) {
     $('#reextract-btn').prop('disabled', true).text('⏳ Extracting...');
     frappe.call({
@@ -759,7 +795,7 @@ function inject_inbox_styles() {
         .inbox-root { max-width: 960px; margin: 0 auto; padding: 20px; }
 
         /* Stats */
-        .inbox-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 20px; }
+        .inbox-stats { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
         .stat-card { background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 16px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.04); transition: transform 0.15s, box-shadow 0.15s; }
         .stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
         .stat-num   { font-size: 28px; font-weight: 800; color: #5e64ff; }
@@ -1031,6 +1067,7 @@ function inject_inbox_styles() {
 
         /* Responsive */
         @media (max-width: 600px) {
+            .inbox-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
             .inbox-filters { flex-wrap: wrap; }
             .filter-actions-right { margin-left: 0; width: 100%; justify-content: flex-start; }
             .inbox-row { flex-direction: column; align-items: flex-start; }

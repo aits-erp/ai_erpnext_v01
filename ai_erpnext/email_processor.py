@@ -1079,6 +1079,34 @@ def reprocess_communication_attachment(communication_name):
         process_incoming_email(communication, "file_after_insert")
 
 
+def get_email_duplicate_filters(doc):
+    received_on = doc.communication_date or doc.creation
+    return {
+        "email_subject": (doc.subject or "(No Subject)")[:140],
+        "from_email": (doc.sender or "")[:140],
+        "received_on": received_on,
+    }
+
+
+def get_existing_queue_for_email(doc):
+    duplicate_filters = get_email_duplicate_filters(doc)
+    existing = frappe.db.get_value(
+        "AI Email Queue",
+        duplicate_filters,
+        ["name", "communication_link"],
+        as_dict=True,
+    )
+    if existing:
+        return existing
+
+    return frappe.db.get_value(
+        "AI Email Queue",
+        {"communication_link": doc.name},
+        ["name", "communication_link"],
+        as_dict=True,
+    )
+
+
 # def process_committed_email(communication_name, _retry=0):
 def process_committed_email(communication_name=None, _retry=0, **kwargs):
     """Create AI queue record after Communication is committed.
@@ -1116,13 +1144,10 @@ def process_committed_email(communication_name=None, _retry=0, **kwargs):
             )
         return
 
-    if frappe.db.exists(
-        "AI Email Queue",
-        {"communication_link": communication_name},
-    ):
+    communication = frappe.get_doc("Communication", communication_name)
+    if get_existing_queue_for_email(communication):
         return
 
-    communication = frappe.get_doc("Communication", communication_name)
     process_incoming_email(communication, "after_commit")
 
 
@@ -1141,10 +1166,7 @@ def process_incoming_email(doc, method):
         if doc.communication_type != "Communication":
             return
 
-        if frappe.db.exists(
-            "AI Email Queue",
-            {"communication_link": doc.name}
-        ):
+        if get_existing_queue_for_email(doc):
             return
 
         body_lower = (doc.content or "").lower()
@@ -1288,17 +1310,15 @@ def process_incoming_email(doc, method):
         # Save queue
         try:
 
+            duplicate_filters = get_email_duplicate_filters(doc)
+            if frappe.db.exists("AI Email Queue", duplicate_filters):
+                return
+
             queue_doc = frappe.get_doc({
                 "doctype": "AI Email Queue",
-                "email_subject": (
-                    doc.subject or "(No Subject)"
-                )[:140],
-
-                "from_email": (
-                    doc.sender or ""
-                )[:140],
-
-                "received_on": doc.communication_date or doc.creation,
+                "email_subject": duplicate_filters["email_subject"],
+                "from_email": duplicate_filters["from_email"],
+                "received_on": duplicate_filters["received_on"],
 
                 "source_type": "Email",
 

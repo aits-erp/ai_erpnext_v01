@@ -204,9 +204,17 @@ def _repair_email_queue_received_dates():
 
 
 @frappe.whitelist()
-def sync_ai_emails():
-    """Pull recent unread mail and advance the full historical Gmail sync."""
+def sync_ai_emails(full_sync=0):
+    """Start Gmail sync in background.
+
+    Kept for older deployed/cached JS that still calls this endpoint directly.
+    """
     frappe.has_permission("Email Account", "read", throw=True)
+    return _enqueue_ai_email_sync(full_sync=full_sync)
+
+
+def _sync_ai_emails_impl(full_sync=0):
+    """Pull recent unread mail, optionally followed by full historical sync."""
 
     accounts = frappe.get_all(
         "Email Account",
@@ -224,27 +232,16 @@ def sync_ai_emails():
     errors = []
 
     for account_name in accounts:
-        # try:
-        #     account = frappe.get_doc("Email Account", account_name)
-
-        #     # UNSEEN gets recent unread mail immediately. ALL then advances
-        #     # historical UID sync and captures newer messages that were read.
-        #     if cint(account.use_imap):
-        #         account.email_sync_option = "UNSEEN"
-        #         account.receive()
-        #         account.email_sync_option = "ALL"
-
-        #     account.receive()
-        #     synced_accounts.append(account_name)
         try:
             account_unseen = frappe.get_doc("Email Account", account_name)
             if cint(account_unseen.use_imap):
                 account_unseen.email_sync_option = "UNSEEN"
                 account_unseen.receive()
 
-                account_all = frappe.get_doc("Email Account", account_name)
-                account_all.email_sync_option = "ALL"
-                account_all.receive()
+                if cint(full_sync):
+                    account_all = frappe.get_doc("Email Account", account_name)
+                    account_all.email_sync_option = "ALL"
+                    account_all.receive()
             else:
                 account_unseen.receive()
 
@@ -265,7 +262,30 @@ def sync_ai_emails():
         "failed_accounts": errors,
         "new_emails": max(0, frappe.db.count("AI Email Queue") - before_count),
         "repaired_dates": repaired_dates,
+        "full_sync": bool(cint(full_sync)),
     }
+
+
+def scheduled_sync_ai_emails():
+    """Scheduled task: pull only new/unread mail."""
+    return _sync_ai_emails_impl(full_sync=0)
+
+
+@frappe.whitelist()
+def sync_ai_emails_background(full_sync=0):
+    """Start Gmail sync in the background so the inbox page stays responsive."""
+    frappe.has_permission("Email Account", "read", throw=True)
+    return _enqueue_ai_email_sync(full_sync=full_sync)
+
+
+def _enqueue_ai_email_sync(full_sync=0):
+    frappe.enqueue(
+        method="ai_erpnext.api._sync_ai_emails_impl",
+        queue="long",
+        timeout=1800,
+        full_sync=cint(full_sync),
+    )
+    return {"success": True, "queued": True}
 
 
 @frappe.whitelist()
@@ -344,31 +364,96 @@ def ignore_queue_item(queue_name):
 
 
 @frappe.whitelist()
+def restore_queue_item(queue_name):
+    frappe.db.set_value("AI Email Queue", queue_name, "status", "Pending")
+    frappe.db.commit()
+    return {"success": True}
+
+
+@frappe.whitelist()
+def delete_duplicate_ai_email_queue_items():
+    """Remove duplicate AI queue rows for same sender, subject, and received time."""
+    rows = frappe.get_all(
+        "AI Email Queue",
+        fields=["name", "email_subject", "from_email", "received_on", "creation"],
+        order_by="received_on desc, creation asc",
+    )
+    seen = set()
+    deleted = 0
+
+    for row in rows:
+        key = (
+            row.email_subject or "",
+            row.from_email or "",
+            str(row.received_on or ""),
+        )
+        if key in seen:
+            frappe.delete_doc("AI Email Queue", row.name, ignore_permissions=True)
+            deleted += 1
+        else:
+            seen.add(key)
+
+    frappe.db.commit()
+    return {"success": True, "deleted": deleted}
+
+
+@frappe.whitelist()
 def get_email_queue(
     status="Pending",
     search="",
     page=1,
     page_length=20,
-    sort_by="newest"
+    sort_by="newest",
+    business_only=0,
 ):
     page = int(page)
     page_length = int(page_length)
 
     filters = {}
 
+    if cint(business_only):
+        status = "Pending"
+
     if status:
         filters["status"] = status
 
-    start = (page - 1) * page_length
+    business_doctypes = [
+        "Quotation",
+        "Sales Order",
+        "Sales Invoice",
+        "Purchase Order",
+        "Purchase Invoice",
+        "Tax Invoice",
+        "Proforma Invoice",
+        "RFQ",
+        "Request for Quotation",
+    ]
 
-    # ── FIX: Search both subject AND sender ──
+    if cint(business_only):
+        filters["suggested_doctype"] = [
+            "in",
+            business_doctypes,
+        ]
+
+    start = (page - 1) * page_length
+    order_by = "received_on asc" if sort_by == "oldest" else "received_on desc"
+    or_filters = [
+        ["email_subject", "like", f"%{search}%"],
+        ["from_email", "like", f"%{search}%"]
+    ] if search else []
+
+    total_rows = frappe.get_all(
+        "AI Email Queue",
+        filters=filters,
+        or_filters=or_filters,
+        fields=["count(name) as count"],
+    )
+    total_count = total_rows[0].count if total_rows else 0
+
     items = frappe.get_all(
         "AI Email Queue",
         filters=filters,
-        or_filters=[
-            ["email_subject", "like", f"%{search}%"],
-            ["from_email", "like", f"%{search}%"]
-        ] if search else [],
+        or_filters=or_filters,
         fields=[
             "name",
             "email_subject",
@@ -377,20 +462,20 @@ def get_email_queue(
             "suggested_doctype",
             "status",
             "created_document",
-            "source_type",
-            "email_body"
-        ]
+            "source_type"
+        ],
+        order_by=order_by,
+        limit_start=start,
+        limit_page_length=page_length,
     )
 
-    # Calculate importance score
+    # Calculate a lightweight score only for the visible page.
     for item in items:
 
         score = 0
 
         subject = (item.get("email_subject") or "").lower()
-        body = (item.get("email_body") or "").lower()
-
-        full_text = subject + " " + body
+        full_text = subject
 
         high_priority = {
             "urgent": 50,
@@ -464,9 +549,6 @@ def get_email_queue(
         if item.get("status") == "Pending":
             score += 15
 
-        if len(body) > 1500:
-            score += 10
-
         score = max(0, min(score, 100))
 
         item["importance_score"] = score
@@ -478,32 +560,19 @@ def get_email_queue(
         else:
             item["importance_label"] = "Low"
 
-    # Apply sorting
     if sort_by == "important":
         items = sorted(
             items,
             key=lambda x: x.get("importance_score", 0),
             reverse=True
         )
-    elif sort_by == "oldest":
-        items = sorted(
-            items,
-            key=lambda x: x.get("received_on")
-        )
-    else:
-        items = sorted(
-            items,
-            key=lambda x: x.get("received_on"),
-            reverse=True
-        )
-
-    total_count = len(items)
-
-    # Pagination after sorting
-    items = items[start:start + page_length]
 
     counts = {
         "pending": frappe.db.count("AI Email Queue", {"status": "Pending"}),
+        "documents": frappe.db.count("AI Email Queue", {
+            "status": "Pending",
+            "suggested_doctype": ["in", business_doctypes],
+        }),
         "ignored": frappe.db.count("AI Email Queue", {"status": "Ignored"}),
         "processed_today": frappe.db.count("AI Email Queue", {
             "status": "Processed",

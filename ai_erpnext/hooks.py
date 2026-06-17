@@ -24,13 +24,15 @@ doc_events = {
     }
 }
 
-
-doctype_js = {
-    "Sales Order":      "public/js/form_ai_button.js",
-    "Quotation":        "public/js/form_ai_button.js",
-    "Sales Invoice":    "public/js/form_ai_button.js",
-    "Purchase Order":   "public/js/form_ai_button.js",
-    "Purchase Invoice": "public/js/form_ai_button.js",
-    "Api Controller": "public/js/api_controller.js",
+scheduled_events = {
+    "cron": {
+        "*/5 * * * *": [
+            "ai_erpnext.api.scheduled_sync_ai_emails"
+        ]
+    }
 }
 
+
+doctype_js = {
+    "Api Controller": "public/js/api_controller.js",
+}
