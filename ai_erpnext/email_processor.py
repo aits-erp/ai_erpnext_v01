@@ -763,16 +763,28 @@ SUPPORTED_ATTACHMENT_EXTENSIONS = {
 
 
 def get_communication_message_id(doc):
-    message_id = (getattr(doc, "message_id", None) or "").strip()
+    message_id = str(getattr(doc, "message_id", None) or "").strip()
     return message_id[:140]
 
 
 def get_communication_email_uid(doc):
-    uid = (getattr(doc, "uid", None) or "").strip()
-    email_account = (getattr(doc, "email_account", None) or "").strip()
+    uid = str(getattr(doc, "uid", None) or "").strip()
+    email_account = str(getattr(doc, "email_account", None) or "").strip()
     if uid and email_account:
         return f"{email_account}:{uid}"[:140]
     return uid[:140]
+
+
+def ai_email_queue_has_column(fieldname):
+    try:
+        return bool(
+            frappe.db.sql(
+                "show columns from `tabAI Email Queue` like %s",
+                fieldname,
+            )
+        )
+    except Exception:
+        return False
 
 
 def normalize_header(value):
@@ -795,6 +807,24 @@ def find_header_index(headers, *aliases):
     return None
 
 
+def find_items_header_index(headers, *aliases):
+    for alias in aliases:
+        exact = f"{alias}_items"
+        for index, header in enumerate(headers):
+            if header == exact:
+                return index
+
+        for index, header in enumerate(headers):
+            if header.endswith("_items") and header_matches(header[:-6], alias):
+                return index
+
+    return find_header_index(headers, *aliases)
+
+
+def row_has_header_set(headers, *aliases):
+    return all(find_items_header_index(headers, alias) is not None for alias in aliases)
+
+
 def to_number(value):
     if value in (None, ""):
         return 0
@@ -804,6 +834,15 @@ def to_number(value):
         return float(cleaned) if cleaned else 0
     except (TypeError, ValueError):
         return 0
+
+
+def split_item_code_label(value):
+    text = str(value or "").strip()
+    if ":" not in text:
+        return text, ""
+
+    code, label = text.split(":", 1)
+    return code.strip(), label.strip()
 
 
 def extract_items_from_rows(rows):
@@ -818,12 +857,31 @@ def extract_items_from_rows(rows):
 
     for index, row in enumerate(rows):
         normalized = [normalize_header(cell) for cell in row]
+        # ERPNext exports contain many parent-field rows before the Items grid.
+        # Prefer the actual child table header: Item Code + Quantity + Rate/Amount.
+        if (
+            find_items_header_index(normalized, "item_code") is not None
+            and find_items_header_index(normalized, "quantity", "qty") is not None
+            and (
+                find_items_header_index(normalized, "rate") is not None
+                or find_items_header_index(normalized, "amount") is not None
+            )
+        ):
+            header_index = index
+            headers = normalized
+            break
+
         has_item = find_header_index(normalized, *item_aliases) is not None
         has_value = any(
             find_header_index(normalized, *aliases) is not None
             for aliases in (qty_aliases, rate_aliases, amount_aliases)
         )
-        if has_item and has_value:
+        if has_item and has_value and normalize_header(row[0] if row else "") in {
+            "no",
+            "idx",
+            "item",
+            "item_code",
+        }:
             header_index = index
             headers = normalized
             break
@@ -831,16 +889,16 @@ def extract_items_from_rows(rows):
     if header_index is None:
         return []
 
-    item_name_index = find_header_index(
+    item_name_index = find_items_header_index(
         headers, "item_name", "item", "product", "description", "item_code"
     )
-    item_code_index = find_header_index(headers, "item_code", "code", "sku")
-    description_index = find_header_index(headers, "description")
-    qty_index = find_header_index(headers, *qty_aliases)
-    rate_index = find_header_index(headers, *rate_aliases)
-    amount_index = find_header_index(headers, *amount_aliases)
-    uom_index = find_header_index(headers, "uom", "stock_uom", "unit")
-    hsn_index = find_header_index(headers, "hsn_code", "hsn", "gst_hsn_code")
+    item_code_index = find_items_header_index(headers, "item_code", "code", "sku")
+    description_index = find_items_header_index(headers, "description")
+    qty_index = find_items_header_index(headers, "quantity", "qty", "stock_qty")
+    rate_index = find_items_header_index(headers, "rate", "price", "unit_price")
+    amount_index = find_items_header_index(headers, "amount", "net_amount")
+    uom_index = find_items_header_index(headers, "uom", "stock_uom", "unit")
+    hsn_index = find_items_header_index(headers, "hsn_code", "hsn", "gst_hsn_code")
 
     def cell(row, index, default=""):
         return row[index] if index is not None and index < len(row) else default
@@ -849,16 +907,43 @@ def extract_items_from_rows(rows):
     for row in rows[header_index + 1:]:
         item_name = str(cell(row, item_name_index)).strip()
         item_code = str(cell(row, item_code_index)).strip()
+        if item_code and not item_name:
+            parsed_code, parsed_name = split_item_code_label(item_code)
+            item_code = parsed_code
+            item_name = parsed_name or parsed_code
+        elif item_code and item_code == item_name:
+            parsed_code, parsed_name = split_item_code_label(item_code)
+            item_code = parsed_code
+            item_name = parsed_name or parsed_code
+        first_cell = normalize_header(cell(row, 0))
 
         # ERPNext export templates sometimes include a second field-name row.
         if normalize_header(item_name) in item_aliases:
             continue
+        if first_cell in {
+            "total_quantity",
+            "total",
+            "taxes",
+            "sales_taxes_and_charges",
+            "totals",
+            "comments",
+            "activity",
+            "additional_discount",
+            "tax_breakup",
+        }:
+            break
         if not item_name and not item_code:
+            if items:
+                break
             continue
 
         qty = to_number(cell(row, qty_index))
         rate = to_number(cell(row, rate_index))
         amount = to_number(cell(row, amount_index)) or qty * rate
+        if qty <= 0 and amount <= 0:
+            if items:
+                break
+            continue
 
         items.append({
             "item_name": item_name or item_code,
@@ -879,6 +964,18 @@ def extract_items_from_rows(rows):
 
 def extract_metadata_from_rows(rows):
     """Extract parent Sales/Purchase document fields from exported rows."""
+    key_value_aliases = {
+        "customer_name": ("customer", "customer_name", "party_name"),
+        "supplier_name": ("supplier", "supplier_name"),
+        "document_date": (
+            "transaction_date", "posting_date", "date", "order_date"
+        ),
+        "due_date": ("delivery_date", "due_date", "schedule_date"),
+        "document_number": ("po_no", "customer_s_purchase_order", "id", "name"),
+        "currency": ("currency",),
+    }
+
+    metadata = {}
     aliases = {
         "customer_name": ("customer", "customer_name", "party_name"),
         "supplier_name": ("supplier", "supplier_name"),
@@ -909,6 +1006,26 @@ def extract_metadata_from_rows(rows):
 
             if metadata.get("customer_name") or metadata.get("supplier_name"):
                 return metadata
+
+    for row in rows:
+        if len(row) > 20:
+            continue
+        normalized = [normalize_header(cell) for cell in row]
+        values = [str(cell).strip() for cell in row]
+        for field, field_aliases in key_value_aliases.items():
+            if metadata.get(field):
+                continue
+            for index, header in enumerate(normalized):
+                if not any(header_matches(header, alias) for alias in field_aliases):
+                    continue
+                for value in values[index + 1:]:
+                    if value and normalize_header(value) not in field_aliases:
+                        metadata[field] = value
+                        break
+                break
+
+    if metadata.get("customer_name") or metadata.get("supplier_name"):
+        return metadata
 
     return {}
 
@@ -1109,7 +1226,7 @@ def get_existing_queue_for_email(doc):
     fields = ["name", "communication_link", "extracted_json"]
 
     message_id = get_communication_message_id(doc)
-    if message_id:
+    if message_id and ai_email_queue_has_column("message_id"):
         existing = frappe.db.get_value(
             "AI Email Queue",
             {"message_id": message_id},
@@ -1120,7 +1237,7 @@ def get_existing_queue_for_email(doc):
             return existing
 
     email_uid = get_communication_email_uid(doc)
-    if email_uid:
+    if email_uid and ai_email_queue_has_column("email_uid"):
         existing = frappe.db.get_value(
             "AI Email Queue",
             {"email_uid": email_uid},
@@ -1375,8 +1492,6 @@ def process_incoming_email(doc, method):
                 "email_subject": duplicate_filters["email_subject"],
                 "from_email": duplicate_filters["from_email"],
                 "received_on": duplicate_filters["received_on"],
-                "message_id": message_id,
-                "email_uid": email_uid,
 
                 "source_type": "Email",
 
@@ -1400,6 +1515,11 @@ def process_incoming_email(doc, method):
                     doc.content or ""
                 )[:5000]
             }
+
+            if ai_email_queue_has_column("message_id"):
+                queue_values["message_id"] = message_id
+            if ai_email_queue_has_column("email_uid"):
+                queue_values["email_uid"] = email_uid
 
             if existing_queue:
                 frappe.db.set_value(

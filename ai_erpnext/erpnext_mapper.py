@@ -110,7 +110,6 @@
 # #             "qty": float(i.get("qty") or 1),
 # #             "rate": float(i.get("rate") or 0),
 # #             "uom": i.get("uom") or "Nos",
-# #             "gst_hsn_code": i.get("hsn_code") or "999999"
 # #         }
 # #         if doctype in ["Sales Order", "Purchase Order"]:
 # #             row["delivery_date"] = today()
@@ -397,8 +396,6 @@
 import frappe
 from frappe.utils import today, getdate
 
-DEFAULT_GST_HSN_CODE = "999999"
-
 def create_document(extracted_data):
     """
     Auto-detects document type and creates the right ERPNext doc
@@ -538,7 +535,8 @@ def _build_items(items, doctype):
             i.get("item_name") or "Unknown Item",
             i.get("item_code") or "",
             i.get("hsn_code") or "",
-            i.get("uom") or "Nos"
+            i.get("uom") or "Nos",
+            doctype
         )
 
         row = {
@@ -558,35 +556,51 @@ def _build_items(items, doctype):
     return result
 
 
-def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos"):
+def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype=""):
     name = (name or "Unknown Item").strip()
-    hsn_code = (hsn_code or DEFAULT_GST_HSN_CODE).strip()
+    hsn_code = str(hsn_code or "").strip()
+    hsn_required = doctype in ["Sales Invoice", "Purchase Invoice"]
 
     if item_code_hint and frappe.db.exists("Item", item_code_hint.strip()):
         existing = item_code_hint.strip()
-        if hsn_code and not frappe.db.get_value("Item", existing, "gst_hsn_code"):
+        current_hsn = frappe.db.get_value("Item", existing, "gst_hsn_code")
+        if not hsn_required and current_hsn == "999999":
+            frappe.db.set_value("Item", existing, "gst_hsn_code", "")
+        elif hsn_required and hsn_code and not current_hsn:
             frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
         return existing
 
     existing = frappe.db.get_value("Item",
         {"item_name": ["like", f"%{name}%"]}, "name")
     if existing:
-        if hsn_code:
-            current_hsn = frappe.db.get_value("Item", existing, "gst_hsn_code")
-            if not current_hsn:
-                frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
+        current_hsn = frappe.db.get_value("Item", existing, "gst_hsn_code")
+        if not hsn_required and current_hsn == "999999":
+            frappe.db.set_value("Item", existing, "gst_hsn_code", "")
+        elif hsn_required and hsn_code and not current_hsn:
+            frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
         return existing
 
-    doc = frappe.get_doc({
+    item_values = {
         "doctype": "Item",
         "item_code": (item_code_hint or name)[:140],
         "item_name": name,
         "item_group": "All Item Groups",
         "is_stock_item": 0,
+        "is_sales_item": 1 if hsn_required else 0,
         "stock_uom": uom or "Nos",
-        "gst_hsn_code": hsn_code
-    })
+    }
+    if hsn_required and hsn_code:
+        item_values["gst_hsn_code"] = hsn_code
+
+    doc = frappe.get_doc(item_values)
     doc.insert(ignore_permissions=True)
+    if not hsn_required:
+        frappe.db.set_value(
+            "Item",
+            doc.name,
+            {"is_sales_item": 1, "is_purchase_item": 1},
+            update_modified=False,
+        )
     return doc.name
 
 

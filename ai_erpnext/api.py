@@ -87,13 +87,6 @@ def create_from_extracted(extracted_data_json, action):
     try:
         data = json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
 
-        all_hsn = [i.get("hsn_code", "") for i in data.get("items", []) if i.get("hsn_code")]
-        fallback_hsn = all_hsn[0] if all_hsn else ""
-
-        for item in data.get("items", []):
-            if not item.get("hsn_code") and fallback_hsn:
-                item["hsn_code"] = fallback_hsn
-
         results = []
 
         if action == "quotation_only":
@@ -250,21 +243,39 @@ def _has_extracted_items(extracted_json):
     return bool(extracted.get("items"))
 
 
+def _ai_email_queue_has_column(fieldname):
+    try:
+        return bool(
+            frappe.db.sql(
+                "show columns from `tabAI Email Queue` like %s",
+                fieldname,
+            )
+        )
+    except Exception:
+        return False
+
+
 def _dedupe_ai_email_queue():
+    has_message_id = _ai_email_queue_has_column("message_id")
+    has_email_uid = _ai_email_queue_has_column("email_uid")
+    fields = [
+        "name",
+        "email_subject",
+        "from_email",
+        "received_on",
+        "communication_link",
+        "status",
+        "extracted_json",
+        "creation",
+    ]
+    if has_message_id:
+        fields.append("message_id")
+    if has_email_uid:
+        fields.append("email_uid")
+
     rows = frappe.get_all(
         "AI Email Queue",
-        fields=[
-            "name",
-            "email_subject",
-            "from_email",
-            "received_on",
-            "message_id",
-            "email_uid",
-            "communication_link",
-            "status",
-            "extracted_json",
-            "creation",
-        ],
+        fields=fields,
         order_by="creation asc",
         limit=5000,
     )
@@ -272,10 +283,12 @@ def _dedupe_ai_email_queue():
     groups = {}
     for row in rows:
         key = None
-        if row.message_id:
-            key = ("message_id", row.message_id)
-        elif row.email_uid:
-            key = ("email_uid", row.email_uid)
+        message_id = row.get("message_id") if has_message_id else None
+        email_uid = row.get("email_uid") if has_email_uid else None
+        if message_id:
+            key = ("message_id", message_id)
+        elif email_uid:
+            key = ("email_uid", email_uid)
         elif row.communication_link:
             key = ("communication_link", row.communication_link)
         else:

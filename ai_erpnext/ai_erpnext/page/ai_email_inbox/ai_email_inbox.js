@@ -5,8 +5,7 @@ frappe.pages['ai_email_inbox'].on_page_load = function(wrapper) {
         single_column: true
     });
 
-    page.add_button('🔄 Sync Gmail', function() { sync_gmail_and_load_inbox(false); });
-    page.add_button('📥 Full Sync History', function() { sync_gmail_and_load_inbox(true); });
+    page.add_button('🔄 Sync Gmail', function() { sync_gmail_and_load_inbox(true); });
     page.add_button('⚙️ Email Settings', function() {
         frappe.set_route('List', 'Email Account');
     });
@@ -279,7 +278,7 @@ function sync_gmail_and_load_inbox(full_sync) {
 
     _sync_in_progress = true;
     frappe.show_alert({
-        message: full_sync ? 'Starting full Gmail sync in background...' : 'Checking Gmail for new emails...',
+        message: 'Syncing Gmail in background. This scans new, old, and read messages.',
         indicator: 'blue'
     }, 8);
 
@@ -294,12 +293,12 @@ function sync_gmail_and_load_inbox(full_sync) {
             }
 
             frappe.show_alert({
-                message: full_sync
-                    ? 'Full Gmail sync is running. Use this only for first setup/history import.'
-                    : 'New-email sync is running. Inbox will refresh automatically.',
+                message: 'Gmail sync is running. Inbox will refresh once after sync starts.',
                 indicator: 'green'
             }, 8);
-            load_inbox();
+            setTimeout(function() {
+                load_inbox();
+            }, 15000);
         },
         always: function() {
             _sync_in_progress = false;
@@ -590,19 +589,21 @@ function open_inbox_modal(queue_name) {
                     <button class="action-choice-btn" style="border-left:4px solid #5e64ff" onclick="restore_item('${queue_name}')">↩ Restore to Pending</button>
                 `);
             } else {
-                $('#imodal-actions').html(warning + btns);
+                $('#imodal-actions').html(`
+                    <div style="width:100%;margin-bottom:10px">
+                        <button class="ai-btn ai-btn-primary ai-btn-sm" id="reextract-btn" onclick="reextract_item('${queue_name}')">🔄 Re-extract File</button>
+                    </div>
+                ` + warning + btns);
             }
 
-            var has_hsn   = (d.extracted.items || []).every(i => i.hsn_code);
             var has_items = (d.extracted.items || []).length > 0;
 
-            if (!has_items || !has_hsn) {
+            if (!has_items) {
                 $('#imodal-actions').prepend(`
                     <div style="width:100%;margin-bottom:12px;padding:10px;background:#fff8e1;border-radius:6px;border-left:4px solid #ffc107;">
                         <div style="font-size:12px;color:#666;margin-bottom:8px;">
-                            ⚠️ ${!has_items ? 'No items extracted.' : 'HSN codes missing.'} Re-extract with updated AI prompt:
+                            ⚠️ No items extracted. Re-extract with updated AI prompt:
                         </div>
-                        <button class="ai-btn ai-btn-primary ai-btn-sm" id="reextract-btn" onclick="reextract_item('${queue_name}')">🔄 Re-extract with AI</button>
                     </div>
                 `);
             }
