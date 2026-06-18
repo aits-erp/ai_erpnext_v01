@@ -6,6 +6,7 @@ frappe.pages['ai_email_inbox'].on_page_load = function(wrapper) {
     });
 
     page.add_button('🔄 Sync Gmail', function() { sync_gmail_and_load_inbox(false); });
+    page.add_button('📥 Full Sync History', function() { sync_gmail_and_load_inbox(true); });
     page.add_button('⚙️ Email Settings', function() {
         frappe.set_route('List', 'Email Account');
     });

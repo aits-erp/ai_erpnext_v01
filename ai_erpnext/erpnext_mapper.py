@@ -397,6 +397,8 @@
 import frappe
 from frappe.utils import today, getdate
 
+DEFAULT_GST_HSN_CODE = "999999"
+
 def create_document(extracted_data):
     """
     Auto-detects document type and creates the right ERPNext doc
@@ -558,9 +560,13 @@ def _build_items(items, doctype):
 
 def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos"):
     name = (name or "Unknown Item").strip()
+    hsn_code = (hsn_code or DEFAULT_GST_HSN_CODE).strip()
 
     if item_code_hint and frappe.db.exists("Item", item_code_hint.strip()):
-        return item_code_hint.strip()
+        existing = item_code_hint.strip()
+        if hsn_code and not frappe.db.get_value("Item", existing, "gst_hsn_code"):
+            frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
+        return existing
 
     existing = frappe.db.get_value("Item",
         {"item_name": ["like", f"%{name}%"]}, "name")
@@ -578,7 +584,7 @@ def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos"):
         "item_group": "All Item Groups",
         "is_stock_item": 0,
         "stock_uom": uom or "Nos",
-        "gst_hsn_code": hsn_code or ""
+        "gst_hsn_code": hsn_code
     })
     doc.insert(ignore_permissions=True)
     return doc.name

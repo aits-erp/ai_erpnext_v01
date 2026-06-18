@@ -203,6 +203,116 @@ def _repair_email_queue_received_dates():
     return repaired
 
 
+def _backfill_ai_queue_from_communications(full_sync=0):
+    """Process existing received Communications that did not trigger the AI hook."""
+    limit = 1000 if cint(full_sync) else 100
+    communications = frappe.get_all(
+        "Communication",
+        filters={
+            "sent_or_received": "Received",
+            "communication_type": "Communication",
+        },
+        fields=["name"],
+        order_by="communication_date desc, creation desc",
+        limit=limit,
+    )
+
+    processed = 0
+    from ai_erpnext.email_processor import (
+        process_committed_email,
+        process_on_update,
+    )
+
+    for row in communications:
+        try:
+            comm = frappe.get_doc("Communication", row.name)
+            if frappe.db.exists(
+                "AI Email Queue", {"communication_link": row.name}
+            ):
+                process_on_update(comm, "ai_backfill")
+            else:
+                process_committed_email(row.name)
+            processed += 1
+        except Exception:
+            frappe.log_error(
+                title=f"AI Email Backfill Error: {row.name}",
+                message=frappe.get_traceback(),
+            )
+
+    return processed
+
+
+def _has_extracted_items(extracted_json):
+    try:
+        extracted = json.loads(extracted_json or "{}")
+    except Exception:
+        return False
+    return bool(extracted.get("items"))
+
+
+def _dedupe_ai_email_queue():
+    rows = frappe.get_all(
+        "AI Email Queue",
+        fields=[
+            "name",
+            "email_subject",
+            "from_email",
+            "received_on",
+            "message_id",
+            "email_uid",
+            "communication_link",
+            "status",
+            "extracted_json",
+            "creation",
+        ],
+        order_by="creation asc",
+        limit=5000,
+    )
+
+    groups = {}
+    for row in rows:
+        key = None
+        if row.message_id:
+            key = ("message_id", row.message_id)
+        elif row.email_uid:
+            key = ("email_uid", row.email_uid)
+        elif row.communication_link:
+            key = ("communication_link", row.communication_link)
+        else:
+            key = (
+                "fallback",
+                row.email_subject,
+                row.from_email,
+                str(row.received_on),
+            )
+        groups.setdefault(key, []).append(row)
+
+    removed = 0
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+
+        def score(row):
+            return (
+                1 if row.status == "Processed" else 0,
+                1 if _has_extracted_items(row.extracted_json) else 0,
+            )
+
+        keep = sorted(group, key=score, reverse=True)[0]
+        for row in group:
+            if row.name == keep.name:
+                continue
+            frappe.delete_doc(
+                "AI Email Queue",
+                row.name,
+                ignore_permissions=True,
+                force=True,
+            )
+            removed += 1
+
+    return removed
+
+
 @frappe.whitelist()
 def sync_ai_emails(full_sync=0):
     """Start Gmail sync in background.
@@ -253,7 +363,9 @@ def _sync_ai_emails_impl(full_sync=0):
                 message=frappe.get_traceback(),
             )
 
+    backfilled = _backfill_ai_queue_from_communications(full_sync=full_sync)
     repaired_dates = _repair_email_queue_received_dates()
+    removed_duplicates = _dedupe_ai_email_queue()
     frappe.db.commit()
 
     return {
@@ -262,6 +374,8 @@ def _sync_ai_emails_impl(full_sync=0):
         "failed_accounts": errors,
         "new_emails": max(0, frappe.db.count("AI Email Queue") - before_count),
         "repaired_dates": repaired_dates,
+        "backfilled": backfilled,
+        "removed_duplicates": removed_duplicates,
         "full_sync": bool(cint(full_sync)),
     }
 

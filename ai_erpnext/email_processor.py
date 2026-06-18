@@ -757,6 +757,23 @@ import json
 import os
 import re
 
+SUPPORTED_ATTACHMENT_EXTENSIONS = {
+    "pdf", "jpg", "jpeg", "png", "webp", "xlsx", "xls", "csv"
+}
+
+
+def get_communication_message_id(doc):
+    message_id = (getattr(doc, "message_id", None) or "").strip()
+    return message_id[:140]
+
+
+def get_communication_email_uid(doc):
+    uid = (getattr(doc, "uid", None) or "").strip()
+    email_account = (getattr(doc, "email_account", None) or "").strip()
+    if uid and email_account:
+        return f"{email_account}:{uid}"[:140]
+    return uid[:140]
+
 
 def normalize_header(value):
     return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_")
@@ -1089,20 +1106,44 @@ def get_email_duplicate_filters(doc):
 
 
 def get_existing_queue_for_email(doc):
-    duplicate_filters = get_email_duplicate_filters(doc)
+    fields = ["name", "communication_link", "extracted_json"]
+
+    message_id = get_communication_message_id(doc)
+    if message_id:
+        existing = frappe.db.get_value(
+            "AI Email Queue",
+            {"message_id": message_id},
+            fields,
+            as_dict=True,
+        )
+        if existing:
+            return existing
+
+    email_uid = get_communication_email_uid(doc)
+    if email_uid:
+        existing = frappe.db.get_value(
+            "AI Email Queue",
+            {"email_uid": email_uid},
+            fields,
+            as_dict=True,
+        )
+        if existing:
+            return existing
+
     existing = frappe.db.get_value(
         "AI Email Queue",
-        duplicate_filters,
-        ["name", "communication_link"],
+        {"communication_link": doc.name},
+        fields,
         as_dict=True,
     )
     if existing:
         return existing
 
+    duplicate_filters = get_email_duplicate_filters(doc)
     return frappe.db.get_value(
         "AI Email Queue",
-        {"communication_link": doc.name},
-        ["name", "communication_link"],
+        duplicate_filters,
+        fields,
         as_dict=True,
     )
 
@@ -1145,8 +1186,16 @@ def process_committed_email(communication_name=None, _retry=0, **kwargs):
         return
 
     communication = frappe.get_doc("Communication", communication_name)
-    if get_existing_queue_for_email(communication):
-        return
+    existing_queue = get_existing_queue_for_email(communication)
+    if existing_queue:
+        try:
+            existing_extracted = json.loads(
+                existing_queue.extracted_json or "{}"
+            )
+        except Exception:
+            existing_extracted = {}
+        if existing_extracted.get("items"):
+            return
 
     process_incoming_email(communication, "after_commit")
 
@@ -1166,8 +1215,16 @@ def process_incoming_email(doc, method):
         if doc.communication_type != "Communication":
             return
 
-        if get_existing_queue_for_email(doc):
-            return
+        existing_queue = get_existing_queue_for_email(doc)
+        if existing_queue:
+            try:
+                existing_extracted = json.loads(
+                    existing_queue.extracted_json or "{}"
+                )
+            except Exception:
+                existing_extracted = {}
+            if existing_extracted.get("items"):
+                return
 
         body_lower = (doc.content or "").lower()
 
@@ -1311,14 +1368,15 @@ def process_incoming_email(doc, method):
         try:
 
             duplicate_filters = get_email_duplicate_filters(doc)
-            if frappe.db.exists("AI Email Queue", duplicate_filters):
-                return
+            message_id = get_communication_message_id(doc)
+            email_uid = get_communication_email_uid(doc)
 
-            queue_doc = frappe.get_doc({
-                "doctype": "AI Email Queue",
+            queue_values = {
                 "email_subject": duplicate_filters["email_subject"],
                 "from_email": duplicate_filters["from_email"],
                 "received_on": duplicate_filters["received_on"],
+                "message_id": message_id,
+                "email_uid": email_uid,
 
                 "source_type": "Email",
 
@@ -1341,11 +1399,24 @@ def process_incoming_email(doc, method):
                 "email_body": (
                     doc.content or ""
                 )[:5000]
-            })
+            }
 
-            queue_doc.insert(
-                ignore_permissions=True
-            )
+            if existing_queue:
+                frappe.db.set_value(
+                    "AI Email Queue",
+                    existing_queue.name,
+                    queue_values,
+                    update_modified=True,
+                )
+            else:
+                queue_doc = frappe.get_doc({
+                    "doctype": "AI Email Queue",
+                    **queue_values,
+                })
+
+                queue_doc.insert(
+                    ignore_permissions=True
+                )
 
             frappe.db.commit()
 
