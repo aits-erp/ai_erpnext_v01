@@ -756,6 +756,8 @@ import frappe
 import json
 import os
 import re
+from zipfile import ZipFile
+from xml.etree import ElementTree as ET
 
 SUPPORTED_ATTACHMENT_EXTENSIONS = {
     "pdf", "jpg", "jpeg", "png", "webp", "xlsx", "xls", "csv"
@@ -856,8 +858,15 @@ def clean_hsn_code(value):
 
 def extract_items_from_rows(rows):
     """Find an item-table header in CSV/XLSX rows and parse its data rows."""
-    item_aliases = ("item_name", "item_code", "item", "product", "description")
-    qty_aliases = ("qty", "quantity", "stock_qty")
+    item_aliases = (
+        "item_name", "item_code", "sku", "item", "product",
+        "product_name", "product_title", "name", "description"
+    )
+    qty_aliases = (
+        "qty", "quantity", "stock_qty", "order_qty", "order_quantity",
+        "total_order_ctns_pcs", "total_order_ctn_pcs",
+        "total_order_ctns", "order_ctns_pcs", "ctns_pcs"
+    )
     rate_aliases = ("rate", "price", "unit_price")
     amount_aliases = ("amount", "total", "base_amount", "net_amount")
 
@@ -869,11 +878,12 @@ def extract_items_from_rows(rows):
         # ERPNext exports contain many parent-field rows before the Items grid.
         # Prefer the actual child table header: Item Code + Quantity + Rate/Amount.
         if (
-            find_items_header_index(normalized, "item_code") is not None
-            and find_items_header_index(normalized, "quantity", "qty") is not None
+            find_items_header_index(normalized, "item_code", "sku") is not None
+            and find_items_header_index(normalized, *qty_aliases) is not None
             and (
                 find_items_header_index(normalized, "rate") is not None
                 or find_items_header_index(normalized, "amount") is not None
+                or find_items_header_index(normalized, *qty_aliases) is not None
             )
         ):
             header_index = index
@@ -903,19 +913,28 @@ def extract_items_from_rows(rows):
     )
     item_code_index = find_items_header_index(headers, "item_code", "code", "sku")
     description_index = find_items_header_index(headers, "description")
-    qty_index = find_items_header_index(headers, "quantity", "qty", "stock_qty")
+    qty_index = find_items_header_index(headers, *qty_aliases)
     rate_index = find_items_header_index(headers, "rate", "price", "unit_price")
     amount_index = find_items_header_index(headers, "amount", "net_amount")
     uom_index = find_items_header_index(headers, "uom", "stock_uom", "unit")
-    hsn_index = find_items_header_index(headers, "hsn_code", "hsn", "gst_hsn_code")
+    hsn_index = find_items_header_index(
+        headers, "hsn_sac", "hsn_code", "hsn", "gst_hsn_code"
+    )
+    capacity_index = find_items_header_index(headers, "capacity", "capacity_size", "size")
 
     def cell(row, index, default=""):
         return row[index] if index is not None and index < len(row) else default
 
     items = []
+    last_item_name = ""
     for row in rows[header_index + 1:]:
         item_name = str(cell(row, item_name_index)).strip()
         item_code = str(cell(row, item_code_index)).strip()
+        capacity = str(cell(row, capacity_index)).strip()
+        if item_name:
+            last_item_name = item_name
+        elif item_code and last_item_name:
+            item_name = last_item_name
         if item_code and not item_name:
             parsed_code, parsed_name = split_item_code_label(item_code)
             item_code = parsed_code
@@ -967,6 +986,11 @@ def extract_items_from_rows(rows):
             "hsn_code": clean_hsn_code(cell(row, hsn_index)),
             "tax_rate": 0,
         })
+        if capacity and capacity.lower() not in (item_name or "").lower():
+            items[-1]["description"] = (
+                f"{items[-1]['description']} - {capacity}"
+                if items[-1]["description"] else capacity
+            )
 
     return items
 
@@ -992,15 +1016,20 @@ def extract_documents_from_rows(rows, document_type=None):
     currency_index = index("currency")
 
     item_name_index = item_index(
-        "item_name", "item", "product", "description", "item_code"
+        "item_name", "item", "product", "product_name", "product_title",
+        "name", "description", "item_code"
     )
     item_code_index = item_index("item_code", "code", "sku")
     description_index = item_index("description")
-    qty_index = item_index("quantity", "qty", "stock_qty")
+    qty_index = item_index(
+        "quantity", "qty", "stock_qty", "order_qty", "order_quantity",
+        "total_order_ctns_pcs", "total_order_ctn_pcs",
+        "total_order_ctns", "order_ctns_pcs", "ctns_pcs"
+    )
     rate_index = item_index("rate", "price", "unit_price")
     amount_index = item_index("amount", "net_amount")
     uom_index = item_index("uom", "stock_uom", "unit")
-    hsn_index = item_index("hsn_code", "hsn", "gst_hsn_code")
+    hsn_index = item_index("hsn_sac", "hsn_code", "hsn", "gst_hsn_code")
     item_due_date_index = item_index("delivery_date", "schedule_date", "due_date")
 
     if item_name_index is None and item_code_index is None:
@@ -1116,7 +1145,7 @@ def extract_metadata_from_rows(rows):
         "document_date": (
             "transaction_date", "posting_date", "date", "order_date"
         ),
-        "due_date": ("delivery_date", "due_date", "schedule_date"),
+        "due_date": ("delivery_date", "due_date", "payment_due_date", "schedule_date"),
         "document_number": ("po_no", "customer_s_purchase_order", "id", "name"),
         "currency": ("currency",),
     }
@@ -1128,7 +1157,7 @@ def extract_metadata_from_rows(rows):
         "document_date": (
             "transaction_date", "posting_date", "date", "order_date"
         ),
-        "due_date": ("delivery_date", "due_date", "schedule_date"),
+        "due_date": ("delivery_date", "due_date", "payment_due_date", "schedule_date"),
         "document_number": ("id", "name", "sales_order", "purchase_order"),
         "currency": ("currency",),
     }
@@ -1209,39 +1238,155 @@ def build_spreadsheet_result(file_path, items, metadata=None):
     }
 
 
+def excel_column_to_index(cell_ref):
+    letters = re.sub(r"[^A-Z]", "", str(cell_ref or "").upper())
+    index = 0
+    for letter in letters:
+        index = index * 26 + (ord(letter) - ord("A") + 1)
+    return index - 1
+
+
+def read_xlsx_rows(file_path):
+    """Read XLSX rows with stdlib only, used when pandas/openpyxl is unavailable."""
+    namespace = {
+        "a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    }
+
+    with ZipFile(file_path) as workbook:
+        shared_strings = []
+        if "xl/sharedStrings.xml" in workbook.namelist():
+            shared_root = ET.fromstring(workbook.read("xl/sharedStrings.xml"))
+            for shared_item in shared_root.findall("a:si", namespace):
+                parts = [
+                    text_node.text or ""
+                    for text_node in shared_item.findall(".//a:t", namespace)
+                ]
+                shared_strings.append("".join(parts))
+
+        workbook_root = ET.fromstring(workbook.read("xl/workbook.xml"))
+        rels_root = ET.fromstring(workbook.read("xl/_rels/workbook.xml.rels"))
+        rels = {
+            rel.attrib["Id"]: rel.attrib["Target"]
+            for rel in rels_root
+        }
+
+        sheets = []
+        for sheet in workbook_root.findall(".//a:sheet", namespace):
+            relation_id = sheet.attrib.get(
+                "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            )
+            target = rels.get(relation_id)
+            if not target:
+                continue
+            sheet_path = target if target.startswith("xl/") else f"xl/{target.lstrip('/')}"
+            sheet_root = ET.fromstring(workbook.read(sheet_path))
+            rows = []
+            for row in sheet_root.findall(".//a:sheetData/a:row", namespace):
+                values = []
+                for cell in row.findall("a:c", namespace):
+                    cell_ref = cell.attrib.get("r", "")
+                    column_index = excel_column_to_index(cell_ref)
+                    while len(values) <= column_index:
+                        values.append("")
+
+                    value_node = cell.find("a:v", namespace)
+                    value = "" if value_node is None else (value_node.text or "")
+                    if cell.attrib.get("t") == "s" and value:
+                        value = shared_strings[int(value)]
+                    elif cell.attrib.get("t") == "inlineStr":
+                        value = "".join(
+                            text_node.text or ""
+                            for text_node in cell.findall(".//a:t", namespace)
+                        )
+                    values[column_index] = value
+                rows.append(values)
+            sheets.append((sheet.attrib.get("name", ""), rows))
+
+        return sheets
+
+
+def extract_spreadsheet_rows(file_path, document_type, rows_by_sheet):
+    all_items = []
+    first_metadata = {}
+
+    for _sheet_name, rows in rows_by_sheet:
+        if not rows:
+            continue
+        documents = extract_documents_from_rows(rows, document_type)
+        sheet_items = [item for doc in documents for item in doc.get("items", [])]
+        if not sheet_items:
+            sheet_items = extract_items_from_rows(rows)
+
+        if sheet_items:
+            all_items.extend(sheet_items)
+            if not first_metadata:
+                first_metadata = extract_metadata_from_rows(rows)
+
+    if not first_metadata:
+        first_metadata = {}
+
+    document = dict(
+        first_metadata,
+        document_type=document_type,
+        items=all_items,
+        documents=[],
+    )
+    if all_items:
+        document["documents"] = [dict(document, documents=[])]
+
+    return build_spreadsheet_result(file_path, all_items, document)
+
+
 def extract_from_excel(file_path):
 
     try:
-        import pandas as pd
+        try:
+            import pandas as pd
+        except Exception:
+            pd = None
+
+        file_name = os.path.basename(file_path).lower()
+        document_type = (
+            "Sales Invoice" if "sales invoice" in file_name
+            else "Purchase Invoice" if "purchase invoice" in file_name
+            else "Purchase Order" if "purchase order" in file_name
+            else "Sales Order"
+        )
 
         # CSV SUPPORT
         if file_path.lower().endswith(".csv"):
 
-            try:
-                df = pd.read_csv(
-                    file_path,
-                    encoding="utf-8",
-                    sep=None,
-                    engine="python"
-                )
+            if pd:
+                try:
+                    df = pd.read_csv(
+                        file_path,
+                        encoding="utf-8",
+                        sep=None,
+                        engine="python"
+                    )
 
-            except Exception:
-                df = pd.read_csv(
-                    file_path,
-                    encoding="latin1",
-                    sep=None,
-                    engine="python"
-                )
+                except Exception:
+                    df = pd.read_csv(
+                        file_path,
+                        encoding="latin1",
+                        sep=None,
+                        engine="python"
+                    )
 
-            df = df.fillna("")
+                df = df.fillna("")
+                rows = [list(df.columns)] + df.values.tolist()
+            else:
+                import csv
+                try:
+                    csv_file = open(file_path, newline="", encoding="utf-8-sig")
+                    rows = list(csv.reader(csv_file))
+                    csv_file.close()
+                except Exception:
+                    csv_file = open(file_path, newline="", encoding="latin1")
+                    rows = list(csv.reader(csv_file))
+                    csv_file.close()
 
-            rows = [list(df.columns)] + df.values.tolist()
-            document_type = (
-                "Sales Invoice" if "sales invoice" in os.path.basename(file_path).lower()
-                else "Purchase Invoice" if "purchase invoice" in os.path.basename(file_path).lower()
-                else "Purchase Order" if "purchase order" in os.path.basename(file_path).lower()
-                else "Sales Order"
-            )
             documents = extract_documents_from_rows(rows, document_type)
             items = [item for doc in documents for item in doc.get("items", [])]
             if not items:
@@ -1268,22 +1413,34 @@ def extract_from_excel(file_path):
 
             text_output = ""
 
-            excel_data = pd.read_excel(
-                file_path,
-                sheet_name=None,
-                header=None
-            )
+            if not pd:
+                return extract_spreadsheet_rows(
+                    file_path,
+                    document_type,
+                    read_xlsx_rows(file_path)
+                )
 
+            try:
+                excel_data = pd.read_excel(
+                    file_path,
+                    sheet_name=None,
+                    header=None
+                )
+            except Exception:
+                return extract_spreadsheet_rows(
+                    file_path,
+                    document_type,
+                    read_xlsx_rows(file_path)
+                )
+
+            rows_by_sheet = []
             for sheet_name, df in excel_data.items():
 
                 text_output += f"\n\nSheet: {sheet_name}\n"
 
                 df = df.fillna("")
                 rows = df.values.tolist()
-                items = extract_items_from_rows(rows)
-                if items:
-                    metadata = extract_metadata_from_rows(rows)
-                    return build_spreadsheet_result(file_path, items, metadata)
+                rows_by_sheet.append((sheet_name, rows))
 
                 for _, row in df.iterrows():
 
@@ -1297,6 +1454,14 @@ def extract_from_excel(file_path):
 
                     if row_text:
                         text_output += row_text + "\n"
+
+            spreadsheet_result = extract_spreadsheet_rows(
+                file_path,
+                document_type,
+                rows_by_sheet
+            )
+            if spreadsheet_result.get("items"):
+                return spreadsheet_result
 
             from ai_erpnext.claude_helper import (
                 extract_from_email_text

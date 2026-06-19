@@ -549,6 +549,9 @@ def _build_items(items, doctype):
             i.get("uom") or "Nos",
             doctype
         )
+        if rate <= 0:
+            rate = _get_item_rate(item_code) or 0.0
+        amount = qty * rate
 
         row = {
             "item_code": item_code,
@@ -567,6 +570,22 @@ def _build_items(items, doctype):
 
         result.append(row)
     return result
+
+
+def _get_item_rate(item_code):
+    try:
+        rate = frappe.db.get_value(
+            "Item Price",
+            {
+                "item_code": item_code,
+                "selling": 1,
+            },
+            "price_list_rate",
+            order_by="modified desc",
+        )
+        return float(rate or 0)
+    except Exception:
+        return 0.0
 
 
 def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype=""):
@@ -743,6 +762,9 @@ def _get_or_create_customer(name):
         frappe.throw("Customer not found in extracted CSV data")
     name = name.strip()
 
+    if frappe.db.exists("Customer", name):
+        return name
+
     exact = frappe.db.get_value("Customer", {"customer_name": name}, "name")
     if exact:
         return exact
@@ -769,6 +791,9 @@ def _get_or_create_supplier(name):
     if not name or name.strip() == "":
         name = "Unknown Supplier"
     name = name.strip()
+
+    if frappe.db.exists("Supplier", name):
+        return name
 
     exact = frappe.db.get_value("Supplier", {"supplier_name": name}, "name")
     if exact:
