@@ -519,6 +519,13 @@ def create_purchase_invoice(data):
 
 # ─── HELPERS ───────────────────────────────────────────────
 DEFAULT_HSN_CODE = "999999"
+GST_DOCTYPES_WITH_HSN = {
+    "Sales Invoice",
+    "Purchase Invoice",
+    "Sales Order",
+    "Purchase Order",
+    "Quotation",
+}
 
 
 def _build_items(items, doctype):
@@ -534,7 +541,7 @@ def _build_items(items, doctype):
         except (TypeError, ValueError):
             rate = 0.0
 
-        hsn_code = _get_valid_hsn_code(i.get("hsn_code"))
+        hsn_code = _get_valid_hsn_code(i.get("hsn_code"), doctype)
         item_code = _get_or_create_item(
             i.get("item_name") or "Unknown Item",
             i.get("item_code") or "",
@@ -551,13 +558,7 @@ def _build_items(items, doctype):
             "rate": rate,
             "uom": i.get("uom") or "Nos",
         }
-        if doctype in [
-            "Sales Order",
-            "Quotation",
-            "Sales Invoice",
-            "Purchase Order",
-            "Purchase Invoice",
-        ]:
+        if hsn_code:
             row["gst_hsn_code"] = hsn_code
         if doctype in ["Sales Order", "Purchase Order"]:
             row["delivery_date"] = _safe_date(i.get("delivery_date")) or today()
@@ -570,18 +571,15 @@ def _build_items(items, doctype):
 
 def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype=""):
     name = (name or "Unknown Item").strip()
-    hsn_code = _get_valid_hsn_code(hsn_code)
-    hsn_required = doctype in [
-        "Sales Order",
-        "Quotation",
-        "Sales Invoice",
-        "Purchase Order",
-        "Purchase Invoice",
-    ]
+    hsn_code = _get_valid_hsn_code(hsn_code, doctype)
+    hsn_required = doctype in GST_DOCTYPES_WITH_HSN
 
     if item_code_hint and frappe.db.exists("Item", item_code_hint.strip()):
         existing = item_code_hint.strip()
         current_hsn = frappe.db.get_value("Item", existing, "gst_hsn_code")
+        if current_hsn and not _hsn_exists(current_hsn):
+            frappe.db.set_value("Item", existing, "gst_hsn_code", "")
+            current_hsn = ""
         if hsn_required and hsn_code and not current_hsn:
             frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
         return existing
@@ -590,6 +588,9 @@ def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype
         {"item_name": ["like", f"%{name}%"]}, "name")
     if existing:
         current_hsn = frappe.db.get_value("Item", existing, "gst_hsn_code")
+        if current_hsn and not _hsn_exists(current_hsn):
+            frappe.db.set_value("Item", existing, "gst_hsn_code", "")
+            current_hsn = ""
         if hsn_required and hsn_code and not current_hsn:
             frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
         return existing
@@ -623,11 +624,84 @@ def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype
     return doc.name
 
 
-def _get_valid_hsn_code(hsn_code):
+def _get_valid_hsn_code(hsn_code, doctype=""):
     hsn_code = "".join(ch for ch in str(hsn_code or "") if ch.isdigit())
-    if len(hsn_code) in {4, 6, 8}:
+    if len(hsn_code) not in {4, 6, 8}:
+        hsn_code = DEFAULT_HSN_CODE
+
+    if _ensure_hsn_code(hsn_code):
         return hsn_code
-    return DEFAULT_HSN_CODE
+
+    existing_hsn = _get_existing_hsn_code()
+    if existing_hsn:
+        return existing_hsn
+
+    if doctype in ["Sales Order", "Purchase Order", "Quotation"]:
+        return ""
+
+    return hsn_code if _hsn_exists(hsn_code) else ""
+
+
+def _hsn_exists(hsn_code):
+    if not hsn_code:
+        return False
+    try:
+        if not frappe.db.exists("DocType", "GST HSN Code"):
+            return False
+        return bool(
+            frappe.db.exists("GST HSN Code", hsn_code)
+            or frappe.db.get_value("GST HSN Code", {"hsn_code": hsn_code}, "name")
+        )
+    except Exception:
+        return False
+
+
+def _ensure_hsn_code(hsn_code):
+    if not hsn_code:
+        return False
+    if _hsn_exists(hsn_code):
+        return True
+    try:
+        if not frappe.db.exists("DocType", "GST HSN Code"):
+            return False
+
+        meta = frappe.get_meta("GST HSN Code")
+        values = {"doctype": "GST HSN Code"}
+        if meta.has_field("hsn_code"):
+            values["hsn_code"] = hsn_code
+        if meta.has_field("gst_hsn_code"):
+            values["gst_hsn_code"] = hsn_code
+        if meta.has_field("description"):
+            values["description"] = "Other"
+
+        doc = frappe.get_doc(values)
+        if getattr(doc.meta, "autoname", "") == "Prompt":
+            doc.name = hsn_code
+        doc.insert(ignore_permissions=True)
+        return _hsn_exists(hsn_code)
+    except Exception:
+        frappe.log_error(
+            title="AI HSN Code Create Error",
+            message=frappe.get_traceback(),
+        )
+        return False
+
+
+def _get_existing_hsn_code():
+    try:
+        if not frappe.db.exists("DocType", "GST HSN Code"):
+            return ""
+        rows = frappe.get_all(
+            "GST HSN Code",
+            fields=["name", "hsn_code"],
+            limit=1,
+            order_by="modified desc",
+        )
+        if not rows:
+            return ""
+        return rows[0].get("hsn_code") or rows[0].get("name") or ""
+    except Exception:
+        return ""
 
 
 def _get_default_valuation_method():
