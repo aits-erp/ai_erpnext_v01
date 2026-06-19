@@ -845,6 +845,15 @@ def split_item_code_label(value):
     return code.strip(), label.strip()
 
 
+def clean_hsn_code(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if re.fullmatch(r"\d+\.0+", text):
+        return text.split(".", 1)[0]
+    return re.sub(r"[^0-9]", "", text)
+
+
 def extract_items_from_rows(rows):
     """Find an item-table header in CSV/XLSX rows and parse its data rows."""
     item_aliases = ("item_name", "item_code", "item", "product", "description")
@@ -955,11 +964,148 @@ def extract_items_from_rows(rows):
             "uom": str(cell(row, uom_index, "Nos")).strip() or "Nos",
             "rate": rate,
             "amount": amount,
-            "hsn_code": str(cell(row, hsn_index)).strip(),
+            "hsn_code": clean_hsn_code(cell(row, hsn_index)),
             "tax_rate": 0,
         })
 
     return items
+
+
+def extract_documents_from_rows(rows, document_type=None):
+    """Parse flat ERPNext export rows into separate document payloads."""
+    if not rows:
+        return []
+
+    headers = [normalize_header(cell) for cell in rows[0]]
+
+    def index(*aliases):
+        return find_header_index(headers, *aliases)
+
+    def item_index(*aliases):
+        return find_items_header_index(headers, *aliases)
+
+    customer_index = index("customer", "customer_name", "party_name")
+    supplier_index = index("supplier", "supplier_name")
+    date_index = index("date", "transaction_date", "posting_date", "order_date")
+    due_date_index = index("delivery_date", "due_date", "schedule_date")
+    number_index = index("id", "name", "sales_order", "purchase_order")
+    currency_index = index("currency")
+
+    item_name_index = item_index(
+        "item_name", "item", "product", "description", "item_code"
+    )
+    item_code_index = item_index("item_code", "code", "sku")
+    description_index = item_index("description")
+    qty_index = item_index("quantity", "qty", "stock_qty")
+    rate_index = item_index("rate", "price", "unit_price")
+    amount_index = item_index("amount", "net_amount")
+    uom_index = item_index("uom", "stock_uom", "unit")
+    hsn_index = item_index("hsn_code", "hsn", "gst_hsn_code")
+    item_due_date_index = item_index("delivery_date", "schedule_date", "due_date")
+
+    if item_name_index is None and item_code_index is None:
+        return []
+
+    def cell(row, cell_index, default=""):
+        if cell_index is None or cell_index >= len(row):
+            return default
+        return str(row[cell_index] or "").strip()
+
+    documents = []
+    by_key = {}
+    active_key = None
+
+    for row in rows[1:]:
+        item_name = cell(row, item_name_index)
+        item_code = cell(row, item_code_index)
+        if item_code and (not item_name or item_code == item_name):
+            parsed_code, parsed_name = split_item_code_label(item_code)
+            item_code = parsed_code
+            item_name = parsed_name or parsed_code
+
+        qty = to_number(cell(row, qty_index))
+        rate = to_number(cell(row, rate_index))
+        amount = to_number(cell(row, amount_index)) or qty * rate
+        has_item = bool(item_name or item_code) and (qty > 0 or amount > 0)
+
+        customer_name = cell(row, customer_index)
+        supplier_name = cell(row, supplier_index)
+        document_number = cell(row, number_index)
+        document_date = cell(row, date_index)
+        due_date = cell(row, item_due_date_index) or cell(row, due_date_index)
+        currency = cell(row, currency_index, "INR") or "INR"
+
+        starts_new_document = bool(
+            document_number or customer_name or supplier_name
+        )
+        if starts_new_document:
+            key = (
+                document_number
+                or "|".join(
+                    [
+                        customer_name or supplier_name,
+                        document_date,
+                        due_date,
+                        str(len(documents) + 1),
+                    ]
+                )
+            )
+            if key not in by_key:
+                doc = {
+                    "document_type": document_type or "Sales Order",
+                    "customer_name": customer_name,
+                    "customer": customer_name,
+                    "supplier_name": supplier_name,
+                    "supplier": supplier_name,
+                    "document_date": document_date,
+                    "document_number": document_number,
+                    "due_date": due_date,
+                    "currency": currency,
+                    "items": [],
+                    "taxes": [],
+                    "payment_terms": "",
+                }
+                by_key[key] = doc
+                documents.append(doc)
+            else:
+                doc = by_key[key]
+                if due_date and not doc.get("due_date"):
+                    doc["due_date"] = due_date
+            active_key = key
+        elif active_key:
+            doc = by_key[active_key]
+        else:
+            continue
+
+        if not has_item:
+            continue
+
+        item = {
+            "item_name": item_name or item_code,
+            "item_code": item_code,
+            "description": cell(row, description_index, item_name or item_code),
+            "qty": qty or 1,
+            "uom": cell(row, uom_index, "Nos") or "Nos",
+            "rate": rate,
+            "amount": amount,
+            "hsn_code": clean_hsn_code(cell(row, hsn_index)),
+            "tax_rate": 0,
+        }
+        if due_date:
+            item["delivery_date"] = due_date
+        doc["items"].append(item)
+
+    result = []
+    for doc in documents:
+        if not doc.get("items"):
+            continue
+        grand_total = sum(item.get("amount") or 0 for item in doc["items"])
+        doc["total_before_tax"] = grand_total
+        doc["total_tax"] = 0
+        doc["grand_total"] = grand_total
+        result.append(doc)
+
+    return result
 
 
 def extract_metadata_from_rows(rows):
@@ -1039,6 +1185,7 @@ def build_spreadsheet_result(file_path, items, metadata=None):
         else "Purchase Order" if "purchase order" in file_name
         else "Sales Order"
     )
+    documents = metadata.pop("documents", []) if metadata else []
     grand_total = sum(item["amount"] for item in items)
 
     return {
@@ -1058,6 +1205,7 @@ def build_spreadsheet_result(file_path, items, metadata=None):
         "currency": metadata.get("currency") or "INR",
         "payment_terms": "",
         "notes": f"Extracted directly from {os.path.basename(file_path)}",
+        "documents": documents,
     }
 
 
@@ -1088,12 +1236,29 @@ def extract_from_excel(file_path):
             df = df.fillna("")
 
             rows = [list(df.columns)] + df.values.tolist()
-            items = extract_items_from_rows(rows)
+            document_type = (
+                "Sales Invoice" if "sales invoice" in os.path.basename(file_path).lower()
+                else "Purchase Invoice" if "purchase invoice" in os.path.basename(file_path).lower()
+                else "Purchase Order" if "purchase order" in os.path.basename(file_path).lower()
+                else "Sales Order"
+            )
+            documents = extract_documents_from_rows(rows, document_type)
+            items = [item for doc in documents for item in doc.get("items", [])]
+            if not items:
+                items = extract_items_from_rows(rows)
             metadata = extract_metadata_from_rows(rows)
+            if documents:
+                metadata = dict(documents[0], documents=documents)
 
             frappe.log_error(
                 title="CSV DEBUG",
-                message=json.dumps(items[:5], indent=2)
+                message=json.dumps(
+                    {
+                        "document_count": len(documents),
+                        "items": items[:5],
+                    },
+                    indent=2
+                )
             )
 
             return build_spreadsheet_result(file_path, items, metadata)
@@ -1311,7 +1476,7 @@ def process_committed_email(communication_name=None, _retry=0, **kwargs):
             )
         except Exception:
             existing_extracted = {}
-        if existing_extracted.get("items"):
+        if existing_extracted.get("items") and existing_extracted.get("documents"):
             return
 
     process_incoming_email(communication, "after_commit")
@@ -1340,7 +1505,7 @@ def process_incoming_email(doc, method):
                 )
             except Exception:
                 existing_extracted = {}
-            if existing_extracted.get("items"):
+            if existing_extracted.get("items") and existing_extracted.get("documents"):
                 return
 
         body_lower = (doc.content or "").lower()

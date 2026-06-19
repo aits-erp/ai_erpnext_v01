@@ -548,9 +548,9 @@ def _build_items(items, doctype):
             "uom": i.get("uom") or "Nos",
         }
         if doctype in ["Sales Order", "Purchase Order"]:
-            row["delivery_date"] = today()
+            row["delivery_date"] = _safe_date(i.get("delivery_date")) or today()
         if doctype == "Purchase Order":
-            row["schedule_date"] = today()
+            row["schedule_date"] = _safe_date(i.get("schedule_date") or i.get("delivery_date")) or today()
 
         result.append(row)
     return result
@@ -580,19 +580,24 @@ def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype
             frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
         return existing
 
+    valuation_method = _get_default_valuation_method()
     item_values = {
         "doctype": "Item",
         "item_code": (item_code_hint or name)[:140],
         "item_name": name,
         "item_group": "All Item Groups",
         "is_stock_item": 0,
-        "is_sales_item": 1 if hsn_required else 0,
+        "is_sales_item": 1,
+        "is_purchase_item": 1,
         "stock_uom": uom or "Nos",
+        "valuation_method": valuation_method,
     }
     if hsn_required and hsn_code:
         item_values["gst_hsn_code"] = hsn_code
 
     doc = frappe.get_doc(item_values)
+    if doc.meta.has_field("valuation_method") and not doc.valuation_method:
+        doc.valuation_method = valuation_method or "FIFO"
     doc.insert(ignore_permissions=True)
     if not hsn_required:
         frappe.db.set_value(
@@ -602,6 +607,14 @@ def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype
             update_modified=False,
         )
     return doc.name
+
+
+def _get_default_valuation_method():
+    try:
+        value = frappe.db.get_single_value("Stock Settings", "valuation_method")
+        return value if value in {"FIFO", "Moving Average", "LIFO"} else "FIFO"
+    except Exception:
+        return "FIFO"
 
 
 def _build_taxes(taxes):

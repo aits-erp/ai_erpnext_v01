@@ -18,6 +18,23 @@ from ai_erpnext.erpnext_mapper import (
 )
 
 
+def _documents_for_action(data, action):
+    documents = data.get("documents") or []
+    if action in {
+        "so_only",
+        "si_only",
+        "quotation_only",
+        "quotation_to_so",
+        "quotation_so_si",
+        "so_to_si",
+        "po_only",
+        "pi_only",
+        "po_to_pi",
+    } and documents:
+        return documents
+    return [data]
+
+
 @frappe.whitelist()
 def process_document(file_url):
     try:
@@ -36,7 +53,7 @@ def process_document(file_url):
             return {"success": False, "error": f"File too large ({size_mb:.1f}MB). Max 10MB.", "stage": "validation"}
 
         ext = os.path.splitext(file_path)[1].lower()
-        allowed = [".pdf", ".jpg", ".jpeg", ".png", ".webp"]
+        allowed = [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".xlsx", ".xls", ".csv"]
         if ext not in allowed:
             return {"success": False, "error": f"File type {ext} not supported", "stage": "validation"}
 
@@ -54,6 +71,9 @@ def process_document(file_url):
 
         if ext == ".pdf":
             extracted = extract_from_pdf(file_path)
+        elif ext in [".xlsx", ".xls", ".csv"]:
+            from ai_erpnext.email_processor import extract_from_excel
+            extracted = extract_from_excel(file_path)
         else:
             extracted = extract_from_image(file_path, mime_map[ext])
 
@@ -88,64 +108,66 @@ def create_from_extracted(extracted_data_json, action):
         data = json.loads(extracted_data_json) if isinstance(extracted_data_json, str) else extracted_data_json
 
         results = []
+        documents = _documents_for_action(data, action)
 
-        if action == "quotation_only":
-            name = create_quotation(data)
-            results.append({"doctype": "Quotation", "name": name})
+        for document_data in documents:
+            if action == "quotation_only":
+                name = create_quotation(document_data)
+                results.append({"doctype": "Quotation", "name": name})
 
-        elif action == "so_only":
-            name = create_sales_order(data)
-            results.append({"doctype": "Sales Order", "name": name})
+            elif action == "so_only":
+                name = create_sales_order(document_data)
+                results.append({"doctype": "Sales Order", "name": name})
 
-        elif action == "si_only":
-            name = create_sales_invoice(data)
-            results.append({"doctype": "Sales Invoice", "name": name})
+            elif action == "si_only":
+                name = create_sales_invoice(document_data)
+                results.append({"doctype": "Sales Invoice", "name": name})
 
-        elif action == "quotation_to_so":
-            q = create_quotation(data)
-            so = make_so_from_quotation(q)
-            results.append({"doctype": "Quotation", "name": q})
-            results.append({"doctype": "Sales Order", "name": so})
+            elif action == "quotation_to_so":
+                q = create_quotation(document_data)
+                so = make_so_from_quotation(q)
+                results.append({"doctype": "Quotation", "name": q})
+                results.append({"doctype": "Sales Order", "name": so})
 
-        elif action == "quotation_so_si":
-            q = create_quotation(data)
-            so = make_so_from_quotation(q)
-            si = make_si_from_so(so)
-            results.append({"doctype": "Quotation", "name": q})
-            results.append({"doctype": "Sales Order", "name": so})
-            results.append({"doctype": "Sales Invoice", "name": si})
+            elif action == "quotation_so_si":
+                q = create_quotation(document_data)
+                so = make_so_from_quotation(q)
+                si = make_si_from_so(so)
+                results.append({"doctype": "Quotation", "name": q})
+                results.append({"doctype": "Sales Order", "name": so})
+                results.append({"doctype": "Sales Invoice", "name": si})
 
-        elif action == "po_only":
-            name = create_purchase_order(data)
-            results.append({"doctype": "Purchase Order", "name": name})
+            elif action == "po_only":
+                name = create_purchase_order(document_data)
+                results.append({"doctype": "Purchase Order", "name": name})
 
-        elif action == "pi_only":
-            name = create_purchase_invoice(data)
-            results.append({"doctype": "Purchase Invoice", "name": name})
+            elif action == "pi_only":
+                name = create_purchase_invoice(document_data)
+                results.append({"doctype": "Purchase Invoice", "name": name})
 
-        elif action == "so_to_si":
-            so = create_sales_order(data)
-            so_doc = frappe.get_doc("Sales Order", so)
-            so_doc.submit()
-            make_si_fn = frappe.get_attr(
-                "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
-            )
-            si_doc = make_si_fn(so)
-            si_doc.insert(ignore_permissions=True)
-            results.append({"doctype": "Sales Order", "name": so})
-            results.append({"doctype": "Sales Invoice", "name": si_doc.name})
+            elif action == "so_to_si":
+                so = create_sales_order(document_data)
+                so_doc = frappe.get_doc("Sales Order", so)
+                so_doc.submit()
+                make_si_fn = frappe.get_attr(
+                    "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
+                )
+                si_doc = make_si_fn(so)
+                si_doc.insert(ignore_permissions=True)
+                results.append({"doctype": "Sales Order", "name": so})
+                results.append({"doctype": "Sales Invoice", "name": si_doc.name})
 
-        elif action == "po_to_pi":
-            po = create_purchase_order(data)
-            po_doc = frappe.get_doc("Purchase Order", po)
-            po_doc.submit()
-            make_pi_fn = frappe.get_attr(
-                "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice"
-            )
-            pi_doc = make_pi_fn(po)
-            pi_doc.insert(ignore_permissions=True)
-            results.append({"doctype": "Purchase Order", "name": po})
-            results.append({"doctype": "Purchase Invoice", "name": pi_doc.name})
+            elif action == "po_to_pi":
+                po = create_purchase_order(document_data)
+                po_doc = frappe.get_doc("Purchase Order", po)
+                po_doc.submit()
+                make_pi_fn = frappe.get_attr(
+                    "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice"
+                )
+                pi_doc = make_pi_fn(po)
+                pi_doc.insert(ignore_permissions=True)
+                results.append({"doctype": "Purchase Order", "name": po})
+                results.append({"doctype": "Purchase Invoice", "name": pi_doc.name})
 
         return {"success": True, "created": results}
 
