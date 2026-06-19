@@ -262,7 +262,64 @@ def _has_extracted_items(extracted_json):
         extracted = json.loads(extracted_json or "{}")
     except Exception:
         return False
-    return bool(extracted.get("items"))
+    return bool(extracted.get("items")) or any(
+        doc.get("items") for doc in extracted.get("documents", [])
+    )
+
+
+def _extract_from_queue_attachments(doc):
+    if not doc.communication_link:
+        return None
+
+    attachments = frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": "Communication",
+            "attached_to_name": doc.communication_link,
+        },
+        fields=["file_url", "file_name"],
+        order_by="creation asc",
+    )
+
+    for att in attachments:
+        if not att.file_name:
+            continue
+
+        ext = att.file_name.split(".")[-1].lower()
+        if ext not in ["pdf", "jpg", "jpeg", "png", "webp", "xlsx", "xls", "csv"]:
+            continue
+
+        file_path = os.path.join(
+            frappe.get_site_path(), "public", att.file_url.lstrip("/")
+        )
+        if not os.path.exists(file_path):
+            file_path = os.path.join(frappe.get_site_path(), att.file_url.lstrip("/"))
+        if not os.path.exists(file_path):
+            continue
+
+        from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
+
+        if ext == "pdf":
+            extracted = extract_from_pdf(file_path)
+        elif ext in ["xlsx", "xls", "csv"]:
+            from ai_erpnext.email_processor import extract_from_excel
+            extracted = extract_from_excel(file_path)
+        else:
+            mime_map = {
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "png": "image/png",
+                "webp": "image/webp",
+            }
+            extracted = extract_from_image(file_path, mime_map.get(ext, "image/jpeg"))
+
+        if extracted and (
+            extracted.get("items")
+            or any(d.get("items") for d in extracted.get("documents", []))
+        ):
+            return extracted
+
+    return None
 
 
 def _ai_email_queue_has_column(fieldname):
@@ -441,6 +498,7 @@ def _enqueue_ai_email_sync(full_sync=0):
 def get_queue_item_detail(queue_name):
     doc = frappe.get_doc("AI Email Queue", queue_name)
     attachments = []
+    extracted = json.loads(doc.extracted_json or "{}")
 
     email_body = doc.email_body or ""
     if doc.communication_link:
@@ -463,6 +521,23 @@ def get_queue_item_detail(queue_name):
         except Exception:
             email_body = "(Could not fetch email body)"
 
+    if not _has_extracted_items(json.dumps(extracted)) and attachments:
+        try:
+            attachment_extracted = _extract_from_queue_attachments(doc)
+            if attachment_extracted:
+                extracted = attachment_extracted
+                frappe.db.set_value("AI Email Queue", queue_name, {
+                    "extracted_json": json.dumps(extracted, indent=2),
+                    "suggested_doctype": extracted.get("document_type", "Unknown"),
+                    "source_type": "Attachment",
+                })
+                frappe.db.commit()
+        except Exception:
+            frappe.log_error(
+                title="Review Attachment Extract Error",
+                message=frappe.get_traceback(),
+            )
+
     return {
         "success": True,
         "data": {
@@ -470,7 +545,7 @@ def get_queue_item_detail(queue_name):
             "email_subject": doc.email_subject,
             "from_email": doc.from_email,
             "received_on": str(doc.received_on),
-            "extracted": json.loads(doc.extracted_json or "{}"),
+            "extracted": extracted,
             "suggested_doctype": doc.suggested_doctype,
             "source_type": doc.source_type,
             "status": doc.status,
@@ -774,11 +849,13 @@ def extract_queue_item(queue_name):
         doc = frappe.get_doc("AI Email Queue", queue_name)
         existing = json.loads(doc.extracted_json or "{}")
 
-        if existing.get("items"):
+        if _has_extracted_items(doc.extracted_json):
             return {"success": True, "extracted": existing, "cached": True}
 
-        from ai_erpnext.claude_helper import extract_from_email_text
-        extracted = extract_from_email_text(doc.email_body or "")
+        extracted = _extract_from_queue_attachments(doc)
+        if not extracted:
+            from ai_erpnext.claude_helper import extract_from_email_text
+            extracted = extract_from_email_text(doc.email_body or "")
 
         frappe.db.set_value("AI Email Queue", queue_name, {
             "extracted_json": json.dumps(extracted, indent=2),
@@ -800,66 +877,9 @@ def reextract_queue_item(queue_name):
     try:
         doc = frappe.get_doc("AI Email Queue", queue_name)
 
-        extracted = None
+        extracted = _extract_from_queue_attachments(doc)
 
-        if doc.communication_link:
-            try:
-                attachments = frappe.get_all(
-                    "File",
-                    filters={
-                        "attached_to_doctype": "Communication",
-                        "attached_to_name": doc.communication_link
-                    },
-                    fields=["file_url", "file_name"]
-                )
-                for att in attachments:
-                    if not att.file_name:
-                        continue
-                    ext = att.file_name.split(".")[-1].lower()
-                    if ext not in ["pdf", "jpg", "jpeg", "png","webp", "xlsx", "xls", "csv"]:
-                        continue
-                    file_path = os.path.join(
-                        frappe.get_site_path(), "public", att.file_url.lstrip("/")
-                    )
-                    if not os.path.exists(file_path):
-                        file_path = os.path.join(
-                            frappe.get_site_path(), att.file_url.lstrip("/")
-                        )
-                    if not os.path.exists(file_path):
-                        continue
-                    from ai_erpnext.claude_helper import extract_from_pdf, extract_from_image
-                    mime_map = {
-                        "jpg": "image/jpeg",
-                        "jpeg": "image/jpeg",
-                        "png": "image/png",
-                        "webp": "image/webp"
-                    }
-                    # extracted = (
-                    #     extract_from_pdf(file_path) if ext == "pdf"
-                    #     else extract_from_image(file_path, mime_map.get(ext, "image/jpeg"))
-                    # )
-                    if ext == "pdf":
-                        extracted = extract_from_pdf(file_path)
-
-                    elif ext in ["xlsx", "xls", "csv"]:
-                        from ai_erpnext.email_processor import extract_from_excel
-                        extracted = extract_from_excel(file_path)
-
-                    else:
-                        extracted = extract_from_image(
-                            file_path,
-                            mime_map.get(ext, "image/jpeg")
-                        )
-                    
-                    if extracted and extracted.get("items"):
-                        break
-            except Exception as e:
-                frappe.log_error(
-                    title="ReExtract Attachment Error",
-                    message=str(e)[:5000]
-                )
-
-        if not extracted or not extracted.get("items"):
+        if not extracted:
             body = doc.email_body or ""
             if not body and doc.communication_link:
                 try:

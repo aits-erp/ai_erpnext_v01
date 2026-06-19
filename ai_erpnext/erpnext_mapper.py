@@ -518,6 +518,9 @@ def create_purchase_invoice(data):
     return doc.name
 
 # ─── HELPERS ───────────────────────────────────────────────
+DEFAULT_HSN_CODE = "999999"
+
+
 def _build_items(items, doctype):
     result = []
     for i in items:
@@ -531,10 +534,11 @@ def _build_items(items, doctype):
         except (TypeError, ValueError):
             rate = 0.0
 
+        hsn_code = _get_valid_hsn_code(i.get("hsn_code"))
         item_code = _get_or_create_item(
             i.get("item_name") or "Unknown Item",
             i.get("item_code") or "",
-            i.get("hsn_code") or "",
+            hsn_code,
             i.get("uom") or "Nos",
             doctype
         )
@@ -547,6 +551,14 @@ def _build_items(items, doctype):
             "rate": rate,
             "uom": i.get("uom") or "Nos",
         }
+        if doctype in [
+            "Sales Order",
+            "Quotation",
+            "Sales Invoice",
+            "Purchase Order",
+            "Purchase Invoice",
+        ]:
+            row["gst_hsn_code"] = hsn_code
         if doctype in ["Sales Order", "Purchase Order"]:
             row["delivery_date"] = _safe_date(i.get("delivery_date")) or today()
         if doctype == "Purchase Order":
@@ -558,15 +570,19 @@ def _build_items(items, doctype):
 
 def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype=""):
     name = (name or "Unknown Item").strip()
-    hsn_code = str(hsn_code or "").strip()
-    hsn_required = doctype in ["Sales Invoice", "Purchase Invoice"]
+    hsn_code = _get_valid_hsn_code(hsn_code)
+    hsn_required = doctype in [
+        "Sales Order",
+        "Quotation",
+        "Sales Invoice",
+        "Purchase Order",
+        "Purchase Invoice",
+    ]
 
     if item_code_hint and frappe.db.exists("Item", item_code_hint.strip()):
         existing = item_code_hint.strip()
         current_hsn = frappe.db.get_value("Item", existing, "gst_hsn_code")
-        if not hsn_required and current_hsn == "999999":
-            frappe.db.set_value("Item", existing, "gst_hsn_code", "")
-        elif hsn_required and hsn_code and not current_hsn:
+        if hsn_required and hsn_code and not current_hsn:
             frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
         return existing
 
@@ -574,9 +590,7 @@ def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype
         {"item_name": ["like", f"%{name}%"]}, "name")
     if existing:
         current_hsn = frappe.db.get_value("Item", existing, "gst_hsn_code")
-        if not hsn_required and current_hsn == "999999":
-            frappe.db.set_value("Item", existing, "gst_hsn_code", "")
-        elif hsn_required and hsn_code and not current_hsn:
+        if hsn_required and hsn_code and not current_hsn:
             frappe.db.set_value("Item", existing, "gst_hsn_code", hsn_code)
         return existing
 
@@ -607,6 +621,13 @@ def _get_or_create_item(name, item_code_hint="", hsn_code="", uom="Nos", doctype
             update_modified=False,
         )
     return doc.name
+
+
+def _get_valid_hsn_code(hsn_code):
+    hsn_code = "".join(ch for ch in str(hsn_code or "") if ch.isdigit())
+    if len(hsn_code) in {4, 6, 8}:
+        return hsn_code
+    return DEFAULT_HSN_CODE
 
 
 def _get_default_valuation_method():
