@@ -8,6 +8,8 @@
   "email_subject",
   "from_email",
   "received_on",
+  "message_id",
+  "email_uid",
   "source_type",
   "extracted_json",
   "email_body",
@@ -37,6 +39,16 @@
    "fieldtype": "Select",
    "label": "Source Type",
    "options": "\nEmail\nPDF Upload\nWhatsApp"
+  },
+  {
+   "fieldname": "message_id",
+   "fieldtype": "Data",
+   "label": "Message ID"
+  },
+  {
+   "fieldname": "email_uid",
+   "fieldtype": "Data",
+   "label": "Email UID"
   },
   {
    "fieldname": "extracted_json",
